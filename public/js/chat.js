@@ -10,13 +10,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 document.addEventListener('DOMContentLoaded', () => {
   const urlParams = new URLSearchParams(window.location.search);
-  const chatId = urlParams.get('id');
-  
-  if (!chatId) {
+  const chatId = parseInt(urlParams.get('id'));
+
+  if (!chatId || isNaN(chatId)) {
     window.location.href = '/';
     return;
   }
-  
+
   loadChat(chatId);
   setupEventListeners();
 });
