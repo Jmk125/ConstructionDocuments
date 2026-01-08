@@ -48,10 +48,18 @@ async function processDocument(documentId) {
 
       // Only store non-empty pages
       if (pageText.length > 0) {
+        // Truncate very large chunks to prevent token limit issues
+        // OpenAI embedding model has 8192 token limit total per batch
+        // We'll limit each chunk to ~6000 chars (roughly 1500 tokens) to be safe
+        const MAX_CHUNK_LENGTH = 6000;
+        const truncatedText = pageText.length > MAX_CHUNK_LENGTH
+          ? pageText.substring(0, MAX_CHUNK_LENGTH) + '... [truncated]'
+          : pageText;
+
         // Store chunk without embedding initially
         runQuery(
           'INSERT INTO chunks (document_id, page_number, content) VALUES (?, ?, ?)',
-          [documentId, pageNum + 1, pageText]
+          [documentId, pageNum + 1, truncatedText]
         );
       }
     }
