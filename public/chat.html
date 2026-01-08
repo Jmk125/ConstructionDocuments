@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat - Construction AI</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="chat-container">
+    <aside class="chat-sidebar">
+      <div class="sidebar-header">
+        <a href="/" class="back-link">← Projects</a>
+      </div>
+      
+      <div class="project-info">
+        <h3 id="sidebarProjectName">Project Name</h3>
+        <a href="#" id="viewProjectLink">View Project</a>
+      </div>
+
+      <div class="chats-section">
+        <div class="section-header">
+          <h4>Chats</h4>
+          <button id="newChatBtn" class="btn-icon" title="New Chat">+</button>
+        </div>
+        <div id="chatsList" class="sidebar-chats-list">
+          <!-- Chats will be loaded here -->
+        </div>
+      </div>
+    </aside>
+
+    <main class="chat-main">
+      <div class="chat-header">
+        <h2 id="chatTitle">New Chat</h2>
+        <button id="deleteChatBtn" class="btn btn-danger btn-sm">Delete Chat</button>
+      </div>
+
+      <div id="messagesContainer" class="messages-container">
+        <div class="welcome-message">
+          <h3>Welcome to your Construction AI Assistant</h3>
+          <p>Ask questions about your construction documents. I'll search through drawings and specifications to help you find the information you need.</p>
+          <p class="tip"><strong>Tip:</strong> I'll cite specific documents and page numbers in my responses. Click on citations to view the source.</p>
+        </div>
+      </div>
+
+      <form id="messageForm" class="message-form">
+        <div class="input-container">
+          <textarea 
+            id="messageInput" 
+            placeholder="Ask about your construction documents..."
+            rows="1"
+          ></textarea>
+          <button type="submit" class="btn btn-primary" id="sendBtn">
+            <span>Send</span>
+          </button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <!-- PDF Viewer Modal -->
+  <div id="pdfModal" class="modal pdf-modal">
+    <div class="modal-content pdf-viewer-content">
+      <div class="modal-header">
+        <h3 id="pdfTitle">Document Viewer</h3>
+        <div class="pdf-controls">
+          <button id="prevPage" class="btn btn-sm">← Prev</button>
+          <span id="pageInfo">Page 1 of 1</span>
+          <button id="nextPage" class="btn btn-sm">Next →</button>
+        </div>
+        <span class="close">&times;</span>
+      </div>
+      <div class="pdf-viewer">
+        <canvas id="pdfCanvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/js/chat.js"></script>
+</body>
+</html>

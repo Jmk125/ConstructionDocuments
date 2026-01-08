@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Details - Construction AI</title>
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-nav">
+                <a href="/" class="back-link">← Back to Projects</a>
+                <h1 id="projectName">Loading...</h1>
+            </div>
+        </header>
+
+        <div class="project-layout">
+            <!-- Left sidebar - Chats -->
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h3>Chats</h3>
+                    <button id="newChatBtn" class="btn btn-sm btn-primary">+ New Chat</button>
+                </div>
+                <div id="chatsList" class="chats-list">
+                    <p class="empty-state">No chats yet. Start by uploading documents and creating a chat.</p>
+                </div>
+            </div>
+
+            <!-- Main content area -->
+            <div class="main-content">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="documents">Documents</button>
+                    <button class="tab-btn" data-tab="chat">Chat</button>
+                </div>
+
+                <!-- Documents Tab -->
+                <div id="documentsTab" class="tab-content active">
+                    <div class="section">
+                        <h3>Upload Documents</h3>
+                        <div class="upload-section">
+                            <div class="form-group">
+                                <label>Document Type</label>
+                                <select id="documentType">
+                                    <option value="drawing">Drawings</option>
+                                    <option value="spec">Specifications</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <input type="file" id="fileInput" accept=".pdf" multiple>
+                                <button id="uploadBtn" class="btn btn-primary">Upload PDFs</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>Uploaded Documents</h3>
+                        <div id="documentsList" class="documents-list">
+                            <p class="loading">Loading documents...</p>
+                        </div>
+                        <button id="processBtn" class="btn btn-primary" style="display: none; margin-top: 1rem;">
+                            Process Documents
+                        </button>
+                        <div id="processStatus" class="process-status"></div>
+                    </div>
+                </div>
+
+                <!-- Chat Tab -->
+                <div id="chatTab" class="tab-content">
+                    <div id="chatArea" class="chat-area">
+                        <p class="empty-state">Select a chat from the sidebar to start asking questions about your documents.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/project.js"></script>
+</body>
+</html>

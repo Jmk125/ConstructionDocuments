@@ -1,0 +1,22 @@
+{
+  "name": "construction-ai",
+  "version": "1.0.0",
+  "description": "An intelligent document analysis tool for construction projects. Upload construction drawings and specifications, then ask questions and get AI-powered answers with citations to specific documents and pages.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "openai": "^6.15.0",
+    "pdf-parse": "^2.4.5",
+    "sql.js": "^1.13.0"
+  }
+}
