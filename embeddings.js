@@ -9,8 +9,10 @@ function initOpenAI(apiKey) {
 
 /**
  * Generate embeddings for all unprocessed chunks in a project
+ * @param {number} projectId - The project ID
+ * @param {function} onProgress - Optional callback for progress updates (current, total)
  */
-async function generateEmbeddings(projectId) {
+async function generateEmbeddings(projectId, onProgress = null) {
   if (!openai) {
     throw new Error('OpenAI not initialized');
   }
@@ -66,6 +68,11 @@ async function generateEmbeddings(projectId) {
       processed += batch.length;
       console.log(`✓ Processed ${processed}/${chunks.length} chunks`);
 
+      // Report progress if callback provided
+      if (onProgress) {
+        onProgress(processed, chunks.length);
+      }
+
       // Small delay to avoid rate limiting
       if (i + batchSize < chunks.length) {
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -104,6 +111,11 @@ async function generateEmbeddings(projectId) {
 
             processed++;
             console.log(`  ✓ Chunk ${chunk.id} processed`);
+
+            // Report progress if callback provided
+            if (onProgress) {
+              onProgress(processed, chunks.length);
+            }
 
             await new Promise(resolve => setTimeout(resolve, 100));
           } catch (innerError) {

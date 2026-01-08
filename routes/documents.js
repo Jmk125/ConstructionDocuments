@@ -74,6 +74,76 @@ router.post('/:projectId/upload', upload.array('documents'), (req, res) => {
   }
 });
 
+// Process documents for a project with SSE progress updates
+router.get('/:projectId/process-stream', async (req, res) => {
+  const projectId = req.params.projectId;
+
+  // Set headers for Server-Sent Events
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    console.log(`\n========================================`);
+    console.log(`Starting document processing for project ${projectId}...`);
+    console.log(`========================================\n`);
+
+    // Get unprocessed documents
+    const docs = getQuery('SELECT * FROM documents WHERE project_id = ? AND processed = 0', [projectId]);
+    const totalDocs = docs.length;
+
+    sendProgress({ stage: 'starting', message: `Processing ${totalDocs} document(s)...`, progress: 0 });
+
+    // Process documents (extract text, create chunks)
+    sendProgress({ stage: 'extracting', message: 'Extracting text from PDFs...', progress: 10 });
+    const processResults = await processProject(projectId);
+    console.log(`\nDocument processing results:`, JSON.stringify(processResults, null, 2));
+
+    sendProgress({ stage: 'extracted', message: 'Text extraction complete', progress: 50 });
+
+    // Generate embeddings
+    console.log('\n========================================');
+    console.log('Generating embeddings...');
+    console.log('========================================\n');
+    sendProgress({ stage: 'embedding', message: 'Generating embeddings...', progress: 60 });
+
+    const embeddingResults = await generateEmbeddings(projectId, (current, total) => {
+      const embeddingProgress = 60 + (current / total) * 35;
+      sendProgress({
+        stage: 'embedding',
+        message: `Generating embeddings... (${current}/${total} chunks)`,
+        progress: Math.round(embeddingProgress)
+      });
+    });
+    console.log(`\nEmbedding results:`, JSON.stringify(embeddingResults, null, 2));
+
+    console.log(`\n========================================`);
+    console.log(`Processing complete for project ${projectId}`);
+    console.log(`========================================\n`);
+
+    sendProgress({
+      stage: 'complete',
+      message: 'Processing complete!',
+      progress: 100,
+      results: { processResults, embeddingResults }
+    });
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    console.error('\n========================================');
+    console.error('ERROR processing documents:', error);
+    console.error('========================================\n');
+    sendProgress({ stage: 'error', message: error.message, progress: 0 });
+    res.end();
+  }
+});
+
 // Process documents for a project (extract text and create chunks)
 router.post('/:projectId/process', async (req, res) => {
   try {

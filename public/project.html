@@ -50,6 +50,13 @@
                                 <input type="file" id="fileInput" accept=".pdf" multiple>
                                 <button id="uploadBtn" class="btn btn-primary">Upload PDFs</button>
                             </div>
+                            <div id="uploadProgress" class="progress-container" style="display: none;">
+                                <div class="progress-label">Uploading documents...</div>
+                                <div class="progress-bar">
+                                    <div id="uploadProgressBar" class="progress-fill"></div>
+                                </div>
+                                <div id="uploadProgressText" class="progress-text">0%</div>
+                            </div>
                         </div>
                     </div>
 
@@ -62,6 +69,13 @@
                             Process Documents
                         </button>
                         <div id="processStatus" class="process-status"></div>
+                        <div id="processProgress" class="progress-container" style="display: none;">
+                            <div class="progress-label">Processing documents...</div>
+                            <div class="progress-bar">
+                                <div id="processProgressBar" class="progress-fill"></div>
+                            </div>
+                            <div id="processProgressText" class="progress-text">0%</div>
+                        </div>
                     </div>
                 </div>
 
