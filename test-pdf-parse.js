@@ -23,14 +23,14 @@ console.log('   Type of pdfParse.default:', typeof pdfParse.default);
 console.log('   Available keys:', Object.keys(pdfParse));
 console.log('   Constructor name:', pdfParse.constructor ? pdfParse.constructor.name : 'none');
 
-// Test 3: Determine correct way to use it
-console.log('\n3. Determining correct usage...');
-const pdf = typeof pdfParse === 'function' ? pdfParse : pdfParse.default;
-console.log('   Using pdf as:', typeof pdf === 'function' ? 'function' : typeof pdf);
-
-if (typeof pdf !== 'function') {
-  console.error('   ✗ Cannot determine how to use pdf-parse');
-  console.error('   Module contents:', pdfParse);
+// Test 3: Check if it's a function
+console.log('\n3. Checking if pdf-parse is callable...');
+if (typeof pdfParse === 'function') {
+  console.log('   ✓ pdf-parse is a function (correct version 1.x)');
+} else {
+  console.error('   ✗ pdf-parse is not a function');
+  console.error('   You have version 2.x installed which has a different API');
+  console.error('   Please run: npm install pdf-parse@1.1.1');
   process.exit(1);
 }
 
@@ -69,13 +69,16 @@ if (testPdfPaths.length > 0) {
       console.log(`   PDF file size: ${(dataBuffer.length / 1024 / 1024).toFixed(2)} MB`);
 
       console.log('   Parsing PDF...');
-      const data = await pdf(dataBuffer);
+      const data = await pdfParse(dataBuffer);
 
       console.log(`   ✓ Success! Pages: ${data.numpages}`);
       console.log(`   Text length: ${data.text.length} characters`);
       console.log(`   First 100 chars: ${data.text.substring(0, 100).replace(/\n/g, ' ')}`);
 
-      console.log('\n✓ All tests passed! pdf-parse is working correctly.');
+      console.log('\n========================================');
+      console.log('✓ All tests passed! pdf-parse is working correctly.');
+      console.log('You can now process documents in your application.');
+      console.log('========================================');
     } catch (error) {
       console.error('   ✗ Error parsing PDF:', error.message);
       console.error('   Stack:', error.stack);

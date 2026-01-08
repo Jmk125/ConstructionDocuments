@@ -2,18 +2,11 @@ const pdfParse = require('pdf-parse');
 const fs = require('fs');
 const { runQuery, getQuery } = require('./database');
 
-// Handle both CommonJS and ES module exports
-const pdf = typeof pdfParse === 'function' ? pdfParse : pdfParse.default;
-
 /**
  * Process a single PDF document: extract text by page and store as chunks
  */
 async function processDocument(documentId) {
   try {
-    // Verify pdf-parse is loaded correctly
-    if (typeof pdf !== 'function') {
-      throw new Error(`pdf-parse module not loaded correctly. Type: ${typeof pdf}, Keys: ${Object.keys(pdfParse || {}).join(', ')}`);
-    }
 
     // Get document info
     const docs = getQuery('SELECT * FROM documents WHERE id = ?', [documentId]);
@@ -31,7 +24,7 @@ async function processDocument(documentId) {
     const pageTexts = [];
 
     // Parse PDF with page-level text extraction
-    const pdfData = await pdf(dataBuffer, {
+    const pdfData = await pdfParse(dataBuffer, {
       max: 0, // parse all pages
       pagerender: async function(pageData) {
         // Extract text content for this page
