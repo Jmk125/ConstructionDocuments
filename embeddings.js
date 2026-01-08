@@ -30,7 +30,10 @@ async function generateEmbeddings(projectId) {
   console.log(`Generating embeddings for ${chunks.length} chunks...`);
 
   let processed = 0;
-  const batchSize = 100; // OpenAI allows up to 2048 inputs per request
+  // Reduced batch size to avoid token limits
+  // OpenAI embedding API has 8192 token limit per request (all inputs combined)
+  // With truncated chunks (~1500 tokens max each), batches of 5 should be safe
+  const batchSize = 5;
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
@@ -38,6 +41,10 @@ async function generateEmbeddings(projectId) {
 
     try {
       console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunks.length / batchSize)} (${batch.length} chunks)...`);
+
+      // Calculate approximate token count for logging
+      const approxTokens = texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0);
+      console.log(`  Estimated tokens: ${approxTokens}`);
 
       // Generate embeddings for batch
       const response = await openai.embeddings.create({
@@ -59,10 +66,54 @@ async function generateEmbeddings(projectId) {
       processed += batch.length;
       console.log(`✓ Processed ${processed}/${chunks.length} chunks`);
 
+      // Small delay to avoid rate limiting
+      if (i + batchSize < chunks.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
     } catch (error) {
-      console.error('Error generating embeddings for batch:', error);
-      console.error('Batch details:', { batchIndex: Math.floor(i / batchSize), batchSize: batch.length });
-      throw error;
+      console.error('Error generating embeddings for batch:', error.message);
+      console.error('Batch details:', {
+        batchIndex: Math.floor(i / batchSize),
+        batchSize: batch.length,
+        chunkIds: batch.map(c => c.id),
+        textLengths: texts.map(t => t.length)
+      });
+
+      // If token limit error, try processing chunks one at a time
+      if (error.status === 400 && error.message.includes('maximum context length')) {
+        console.log('Token limit exceeded. Retrying with individual chunks...');
+
+        for (let j = 0; j < batch.length; j++) {
+          try {
+            const chunk = batch[j];
+            const text = texts[j];
+
+            console.log(`  Processing chunk ${chunk.id} individually (${text.length} chars)...`);
+
+            const response = await openai.embeddings.create({
+              model: 'text-embedding-3-small',
+              input: [text]
+            });
+
+            const embedding = response.data[0].embedding;
+            runQuery(
+              'UPDATE chunks SET embedding = ? WHERE id = ?',
+              [JSON.stringify(embedding), chunk.id]
+            );
+
+            processed++;
+            console.log(`  ✓ Chunk ${chunk.id} processed`);
+
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (innerError) {
+            console.error(`  ✗ Failed to process chunk ${batch[j].id}:`, innerError.message);
+            // Continue with other chunks instead of failing completely
+          }
+        }
+      } else {
+        throw error;
+      }
     }
   }
 
