@@ -78,14 +78,24 @@ router.post('/:projectId/upload', upload.array('documents'), (req, res) => {
 router.post('/:projectId/process', async (req, res) => {
   try {
     const projectId = req.params.projectId;
+    console.log(`\n========================================`);
+    console.log(`Starting document processing for project ${projectId}...`);
+    console.log(`========================================\n`);
 
     // Process documents (extract text, create chunks)
-    console.log(`Starting document processing for project ${projectId}...`);
     const processResults = await processProject(projectId);
+    console.log(`\nDocument processing results:`, JSON.stringify(processResults, null, 2));
 
     // Generate embeddings
+    console.log('\n========================================');
     console.log('Generating embeddings...');
+    console.log('========================================\n');
     const embeddingResults = await generateEmbeddings(projectId);
+    console.log(`\nEmbedding results:`, JSON.stringify(embeddingResults, null, 2));
+
+    console.log(`\n========================================`);
+    console.log(`Processing complete for project ${projectId}`);
+    console.log(`========================================\n`);
 
     res.json({
       message: 'Documents processed successfully',
@@ -93,8 +103,10 @@ router.post('/:projectId/process', async (req, res) => {
       embeddingResults
     });
   } catch (error) {
-    console.error('Error processing documents:', error);
-    res.status(500).json({ error: error.message });
+    console.error('\n========================================');
+    console.error('ERROR processing documents:', error);
+    console.error('========================================\n');
+    res.status(500).json({ error: error.message, stack: error.stack });
   }
 });
 

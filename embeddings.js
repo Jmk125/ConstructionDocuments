@@ -22,6 +22,11 @@ async function generateEmbeddings(projectId) {
     WHERE d.project_id = ? AND c.embedding IS NULL
   `, [projectId]);
 
+  if (chunks.length === 0) {
+    console.log('No chunks need embeddings - all chunks already processed');
+    return { chunksProcessed: 0 };
+  }
+
   console.log(`Generating embeddings for ${chunks.length} chunks...`);
 
   let processed = 0;
@@ -32,6 +37,8 @@ async function generateEmbeddings(projectId) {
     const texts = batch.map(chunk => chunk.content);
 
     try {
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunks.length / batchSize)} (${batch.length} chunks)...`);
+
       // Generate embeddings for batch
       const response = await openai.embeddings.create({
         model: 'text-embedding-3-small',
@@ -42,7 +49,7 @@ async function generateEmbeddings(projectId) {
       for (let j = 0; j < batch.length; j++) {
         const chunk = batch[j];
         const embedding = response.data[j].embedding;
-        
+
         runQuery(
           'UPDATE chunks SET embedding = ? WHERE id = ?',
           [JSON.stringify(embedding), chunk.id]
@@ -50,10 +57,11 @@ async function generateEmbeddings(projectId) {
       }
 
       processed += batch.length;
-      console.log(`Processed ${processed}/${chunks.length} chunks`);
+      console.log(`✓ Processed ${processed}/${chunks.length} chunks`);
 
     } catch (error) {
-      console.error('Error generating embeddings:', error);
+      console.error('Error generating embeddings for batch:', error);
+      console.error('Batch details:', { batchIndex: Math.floor(i / batchSize), batchSize: batch.length });
       throw error;
     }
   }
