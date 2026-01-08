@@ -3,6 +3,77 @@ const fs = require('fs');
 const { runQuery, getQuery } = require('./database');
 
 /**
+ * Extract sheet number from page text
+ * Common patterns in construction drawings:
+ * - "SHEET: A-101", "SHEET NO: S-3.1", "DRAWING NO: E-201"
+ * - "Sheet A-101", "DWG. NO. M-301"
+ * - Just "A-101" or similar format
+ */
+function extractSheetNumber(pageText) {
+  // Common sheet number patterns (ordered by specificity)
+  const patterns = [
+    // Explicit sheet/drawing labels
+    /(?:SHEET|DRAWING|DWG\.?)\s*(?:NO\.?|NUMBER|#)?\s*:?\s*([A-Z]{1,3}[-\s]?\d+(?:\.\d+)?)/i,
+    // Sheet number at start of line or with specific formatting
+    /^([A-Z]{1,3}[-\s]?\d+(?:\.\d+)?)\s*$/m,
+    // Sheet number with common prefixes (A-, S-, E-, M-, P-, etc.)
+    /\b([A-Z]{1,3}[-]\d+(?:\.\d+)?)\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pageText.match(pattern);
+    if (match && match[1]) {
+      // Normalize: remove extra spaces, ensure hyphen format
+      const sheetNum = match[1].replace(/\s+/g, '').replace(/([A-Z]+)(\d)/, '$1-$2');
+
+      // Validate it looks like a real sheet number (1-3 letters, hyphen, numbers)
+      if (/^[A-Z]{1,3}-\d+(\.\d+)?$/.test(sheetNum)) {
+        return sheetNum;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract detail references from page text
+ * Common patterns: "3/A-101", "DETAIL 5/S-201", "SEE DETAIL 2/A-301"
+ */
+function extractDetailReferences(pageText) {
+  const detailPattern = /(?:DETAIL|DTL\.?|SEE)\s*(\d+)\s*\/\s*([A-Z]{1,3}[-]?\d+(?:\.\d+)?)/gi;
+  const simplePattern = /\b(\d+)\s*\/\s*([A-Z]{1,3}[-]\d+(?:\.\d+)?)\b/g;
+
+  const details = new Set();
+  let match;
+
+  // Try explicit detail references first
+  while ((match = detailPattern.exec(pageText)) !== null) {
+    const detailNum = match[1];
+    const sheetNum = match[2].replace(/\s+/g, '').replace(/([A-Z]+)(\d)/, '$1-$2');
+    details.add(`${detailNum}/${sheetNum}`);
+  }
+
+  // Try simple format (number/sheet) - but be more conservative
+  const lines = pageText.split('\n');
+  for (const line of lines) {
+    if (line.length < 100) { // Only check short lines to avoid false positives
+      let simpleMatch;
+      while ((simpleMatch = simplePattern.exec(line)) !== null) {
+        const detailNum = simpleMatch[1];
+        const sheetNum = simpleMatch[2].replace(/\s+/g, '').replace(/([A-Z]+)(\d)/, '$1-$2');
+        // Only add if it looks like a valid detail reference
+        if (parseInt(detailNum) <= 50) { // Reasonable detail number
+          details.add(`${detailNum}/${sheetNum}`);
+        }
+      }
+    }
+  }
+
+  return Array.from(details);
+}
+
+/**
  * Process a single PDF document: extract text by page and store as chunks
  */
 async function processDocument(documentId) {
@@ -48,6 +119,18 @@ async function processDocument(documentId) {
 
       // Only store non-empty pages
       if (pageText.length > 0) {
+        // Extract sheet number and detail references
+        const sheetNumber = extractSheetNumber(pageText);
+        const detailRefs = extractDetailReferences(pageText);
+        const detailReference = detailRefs.length > 0 ? JSON.stringify(detailRefs) : null;
+
+        if (sheetNumber) {
+          console.log(`  Page ${pageNum + 1}: Found sheet number ${sheetNumber}`);
+        }
+        if (detailRefs.length > 0) {
+          console.log(`  Page ${pageNum + 1}: Found ${detailRefs.length} detail references`);
+        }
+
         // Truncate very large chunks to prevent token limit issues
         // OpenAI embedding model has 8192 token limit total per batch
         // We'll limit each chunk to ~6000 chars (roughly 1500 tokens) to be safe
@@ -58,8 +141,8 @@ async function processDocument(documentId) {
 
         // Store chunk without embedding initially
         runQuery(
-          'INSERT INTO chunks (document_id, page_number, content) VALUES (?, ?, ?)',
-          [documentId, pageNum + 1, truncatedText]
+          'INSERT INTO chunks (document_id, page_number, sheet_number, detail_reference, content) VALUES (?, ?, ?, ?, ?)',
+          [documentId, pageNum + 1, sheetNumber, detailReference, truncatedText]
         );
       }
     }

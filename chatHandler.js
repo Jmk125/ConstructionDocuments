@@ -46,22 +46,110 @@ function addMessage(chatId, role, content, citations = null) {
 }
 
 /**
+ * Resolve sheet numbers to page numbers for PDF navigation
+ */
+function resolveSheetNumbers(citations, projectId) {
+  return citations.map(citation => {
+    // If already has page number or no sheet number, return as is
+    if (citation.page || !citation.sheet) {
+      return citation;
+    }
+
+    // Look up the page number for this sheet number
+    const result = getOneQuery(`
+      SELECT c.page_number, d.filename
+      FROM chunks c
+      JOIN documents d ON c.document_id = d.id
+      WHERE d.project_id = ?
+        AND c.sheet_number = ?
+        AND d.filename = ?
+      LIMIT 1
+    `, [projectId, citation.sheet, citation.source]);
+
+    if (result) {
+      return {
+        ...citation,
+        page: result.page_number,
+        filename: result.filename
+      };
+    }
+
+    // If no exact match found, try to find by filename only
+    const fallback = getOneQuery(`
+      SELECT c.page_number, c.sheet_number, d.filename
+      FROM chunks c
+      JOIN documents d ON c.document_id = d.id
+      WHERE d.project_id = ?
+        AND d.filename = ?
+      LIMIT 1
+    `, [projectId, citation.source]);
+
+    if (fallback) {
+      return {
+        ...citation,
+        page: fallback.page_number,
+        filename: fallback.filename
+      };
+    }
+
+    // Return citation even if we couldn't resolve (will show error to user)
+    return citation;
+  });
+}
+
+/**
  * Extract citations from GPT response
- * Format: [Drawing A-101, Page 3] or [Section 09 90 00, Page 5]
+ * Formats:
+ * - Sheet-based: [Drawing A-101, Sheet A-101] or [Drawing A-101, Sheet S-3.1]
+ * - Page-based (fallback): [Section 09 90 00, Page 5]
+ * - Detail-based: [Drawing A-101, Detail 3/A-101]
  */
 function extractCitations(content) {
-  const citationRegex = /\[([^\]]+),\s*Page\s*(\d+)\]/gi;
   const citations = [];
+
+  // Pattern 1: Sheet number citations [filename, Sheet X-###]
+  const sheetRegex = /\[([^\]]+?),\s*Sheet\s+([A-Z]{1,3}-\d+(?:\.\d+)?)\]/gi;
   let match;
-  
-  while ((match = citationRegex.exec(content)) !== null) {
+
+  while ((match = sheetRegex.exec(content)) !== null) {
     citations.push({
       source: match[1].trim(),
-      page: parseInt(match[2]),
+      sheet: match[2].trim(),
+      page: null, // Will be resolved later
       fullText: match[0]
     });
   }
-  
+
+  // Pattern 2: Detail references [filename, Detail #/X-###]
+  const detailRegex = /\[([^\]]+?),\s*Detail\s+(\d+\/[A-Z]{1,3}-\d+(?:\.\d+)?)\]/gi;
+  while ((match = detailRegex.exec(content)) !== null) {
+    const detailRef = match[2].trim();
+    const sheetMatch = detailRef.match(/\/([A-Z]{1,3}-\d+(?:\.\d+)?)/);
+
+    citations.push({
+      source: match[1].trim(),
+      sheet: sheetMatch ? sheetMatch[1] : null,
+      detail: detailRef,
+      page: null,
+      fullText: match[0]
+    });
+  }
+
+  // Pattern 3: Fallback to page numbers [filename, Page #]
+  const pageRegex = /\[([^\]]+?),\s*Page\s+(\d+)\]/gi;
+  while ((match = pageRegex.exec(content)) !== null) {
+    // Only add if not already captured as sheet citation
+    const alreadyAdded = citations.some(c => c.fullText === match[0]);
+    if (!alreadyAdded) {
+      citations.push({
+        source: match[1].trim(),
+        page: parseInt(match[2]),
+        sheet: null,
+        fullText: match[0]
+      });
+    }
+  }
+
   return citations;
 }
 
@@ -118,10 +206,13 @@ async function sendMessage(chatId, userMessage) {
 Your task is to answer questions about the construction drawings and specifications based on the provided document excerpts.
 
 When answering:
-1. Be specific and cite your sources using the format: [Source Name, Page X]
-2. If information is found in multiple locations, cite all relevant sources
-3. If you cannot find information in the provided documents, say so clearly
-4. For scope questions, be thorough and reference all relevant sections
+1. Be specific and cite your sources. For drawings with sheet numbers, use the format: [Source Name, Sheet X-###]
+   For specifications or documents without sheet numbers, use: [Source Name, Page X]
+2. When referencing specific details, use the format: [Source Name, Detail #/Sheet]
+   Example: [Drawing A-101, Detail 3/A-101]
+3. If information is found in multiple locations, cite all relevant sources
+4. If you cannot find information in the provided documents, say so clearly
+5. For scope questions, be thorough and reference all relevant sections
 
 Available document context:
 ${context}`
@@ -156,7 +247,10 @@ ${context}`
   const assistantMessage = completion.choices[0].message.content;
 
   // Extract citations
-  const citations = extractCitations(assistantMessage);
+  let citations = extractCitations(assistantMessage);
+
+  // Resolve sheet numbers to page numbers for PDF navigation
+  citations = resolveSheetNumbers(citations, chat.project_id);
 
   // Add assistant message to database
   addMessage(chatId, 'assistant', assistantMessage, citations);

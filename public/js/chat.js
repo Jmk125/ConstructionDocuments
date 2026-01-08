@@ -144,26 +144,46 @@ function appendMessage(role, content, citations = []) {
   const container = document.getElementById('messagesContainer');
   const messageDiv = document.createElement('div');
   messageDiv.className = `message ${role}`;
-  
+
   let processedContent = escapeHtml(content);
-  
+
   // Replace citation placeholders with clickable links
   if (citations.length > 0) {
     citations.forEach(citation => {
-      const citationText = `[Document: ${citation.filename}, Page: ${citation.page}]`;
-      const citationLink = `<a class="citation" href="#" data-filename="${escapeHtml(citation.filename)}" data-page="${citation.page}">${citationText}</a>`;
-      processedContent = processedContent.replace(escapeHtml(citationText), citationLink);
+      let displayText;
+      let originalText;
+
+      // Determine what the original citation text looks like in the content
+      if (citation.detail) {
+        // Detail reference: [filename, Detail #/Sheet]
+        displayText = `[${citation.source}, Detail ${citation.detail}]`;
+        originalText = displayText;
+      } else if (citation.sheet) {
+        // Sheet number: [filename, Sheet X-###]
+        displayText = `[${citation.source}, Sheet ${citation.sheet}]`;
+        originalText = displayText;
+      } else {
+        // Page number: [filename, Page #]
+        displayText = `[${citation.source}, Page ${citation.page}]`;
+        originalText = displayText;
+      }
+
+      // Create clickable link with metadata
+      const citationLink = `<a class="citation" href="#" data-filename="${escapeHtml(citation.filename || citation.source)}" data-page="${citation.page}" data-sheet="${escapeHtml(citation.sheet || '')}" data-detail="${escapeHtml(citation.detail || '')}">${escapeHtml(displayText)}</a>`;
+
+      // Replace in content
+      processedContent = processedContent.replace(escapeHtml(originalText), citationLink);
     });
   }
-  
+
   messageDiv.innerHTML = `
     <div class="message-content">
       ${formatMessageContent(processedContent)}
     </div>
   `;
-  
+
   container.appendChild(messageDiv);
-  
+
   // Add click handlers to citations
   const citationLinks = messageDiv.querySelectorAll('.citation');
   citationLinks.forEach(link => {
@@ -171,10 +191,17 @@ function appendMessage(role, content, citations = []) {
       e.preventDefault();
       const filename = link.dataset.filename;
       const page = parseInt(link.dataset.page);
-      await openPDFViewer(filename, page);
+      const sheet = link.dataset.sheet;
+      const detail = link.dataset.detail;
+
+      if (page) {
+        await openPDFViewer(filename, page, sheet, detail);
+      } else {
+        showError('Unable to locate page for this citation');
+      }
     });
   });
-  
+
   container.scrollTop = container.scrollHeight;
 }
 
@@ -303,34 +330,41 @@ async function deleteChat() {
   }
 }
 
-async function openPDFViewer(filename, pageNumber) {
+async function openPDFViewer(filename, pageNumber, sheetNumber = '', detailRef = '') {
   try {
     // Find the document to get its filepath
     const projectResponse = await fetch(`${API_BASE}/projects/${currentProject.id}`);
     const project = await projectResponse.json();
-    
+
     const document = project.documents.find(doc => doc.filename === filename);
     if (!document) {
       showError('Document not found');
       return;
     }
-    
+
     // Construct the URL to the PDF
     const pdfUrl = `/uploads/${currentProject.id}/${document.type === 'spec' ? 'specs' : 'drawings'}/${filename}`;
-    
+
     // Load PDF
     const loadingTask = pdfjsLib.getDocument(pdfUrl);
     pdfDoc = await loadingTask.promise;
-    
+
     // Set current page
     currentPage = pageNumber;
-    
-    // Update modal title
-    document.getElementById('pdfTitle').textContent = filename;
-    
+
+    // Update modal title with sheet number if available
+    let title = filename;
+    if (sheetNumber) {
+      title += ` - Sheet ${sheetNumber}`;
+    }
+    if (detailRef) {
+      title += ` - Detail ${detailRef}`;
+    }
+    document.getElementById('pdfTitle').textContent = title;
+
     // Render page
     await renderPDFPage(currentPage);
-    
+
     // Show modal
     document.getElementById('pdfModal').classList.add('active');
   } catch (error) {
