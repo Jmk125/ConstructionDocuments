@@ -104,9 +104,12 @@ function displayChats(chats) {
     }
 
     container.innerHTML = chats.map(chat => `
-        <div class="chat-item ${chat.id === currentChatId ? 'active' : ''}" onclick="loadChat(${chat.id})">
-            <div class="chat-item-title">${escapeHtml(chat.title || 'Untitled Chat')}</div>
-            <div class="chat-item-date">${formatDate(chat.updated_at)}</div>
+        <div class="chat-item ${chat.id === currentChatId ? 'active' : ''}">
+            <div onclick="loadChat(${chat.id})" style="flex: 1; cursor: pointer;">
+                <div class="chat-item-title">${escapeHtml(chat.title || 'Untitled Chat')}</div>
+                <div class="chat-item-date">${formatDate(chat.updated_at)}</div>
+            </div>
+            <button class="btn btn-danger btn-sm chat-delete-btn" onclick="deleteChat(${chat.id}, event)" title="Delete chat">×</button>
         </div>
     `).join('');
 }
@@ -115,6 +118,9 @@ async function uploadDocuments() {
     const fileInput = document.getElementById('fileInput');
     const docType = document.getElementById('documentType').value;
     const uploadBtn = document.getElementById('uploadBtn');
+    const progressContainer = document.getElementById('uploadProgress');
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
 
     console.log('Upload button clicked');
     console.log('Files selected:', fileInput.files.length);
@@ -131,66 +137,146 @@ async function uploadDocuments() {
 
     const formData = new FormData();
     formData.append('type', docType);
-    
+
     for (let file of fileInput.files) {
         formData.append('documents', file);
     }
 
-    // Disable button and show loading state
+    // Disable button and show progress
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Uploading...';
+    progressContainer.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = '0%';
 
-    try {
-        console.log('Starting upload...');
-        const response = await fetch(`${API_BASE}/documents/${currentProjectId}/upload`, {
-            method: 'POST',
-            body: formData
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        // Track upload progress
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                progressBar.style.width = percentComplete + '%';
+                progressText.textContent = Math.round(percentComplete) + '%';
+            }
         });
 
-        console.log('Upload response status:', response.status);
+        // Handle completion
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                const result = JSON.parse(xhr.responseText);
+                console.log('Upload result:', result);
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Upload failed');
-        }
+                fileInput.value = '';
+                progressContainer.style.display = 'none';
+                loadProject();
+                alert('Documents uploaded successfully! Click "Process Documents" to analyze them.');
+                resolve(result);
+            } else {
+                const errorData = JSON.parse(xhr.responseText);
+                reject(new Error(errorData.error || 'Upload failed'));
+            }
+        });
 
-        const result = await response.json();
-        console.log('Upload result:', result);
+        // Handle errors
+        xhr.addEventListener('error', () => {
+            reject(new Error('Network error during upload'));
+        });
 
-        fileInput.value = '';
-        loadProject();
-        alert('Documents uploaded successfully! Click "Process Documents" to analyze them.');
-    } catch (error) {
+        // Always reset UI
+        xhr.addEventListener('loadend', () => {
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = 'Upload PDFs';
+            if (xhr.status < 200 || xhr.status >= 300) {
+                progressContainer.style.display = 'none';
+            }
+        });
+
+        // Start upload
+        console.log('Starting upload...');
+        xhr.open('POST', `${API_BASE}/documents/${currentProjectId}/upload`);
+        xhr.send(formData);
+    }).catch(error => {
         console.error('Error uploading documents:', error);
         alert('Error uploading documents: ' + error.message);
-    } finally {
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload PDFs';
-    }
+        progressContainer.style.display = 'none';
+    });
 }
 
 async function processDocuments() {
     const processBtn = document.getElementById('processBtn');
     const statusDiv = document.getElementById('processStatus');
+    const progressContainer = document.getElementById('processProgress');
+    const progressBar = document.getElementById('processProgressBar');
+    const progressText = document.getElementById('processProgressText');
 
     processBtn.disabled = true;
     statusDiv.classList.add('active');
     statusDiv.innerHTML = '<p>Processing documents... This may take a few minutes.</p>';
+    progressContainer.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = '0%';
 
     try {
-        const response = await fetch(`${API_BASE}/documents/${currentProjectId}/process`, {
-            method: 'POST'
-        });
+        // Use EventSource for Server-Sent Events
+        const eventSource = new EventSource(`${API_BASE}/documents/${currentProjectId}/process-stream`);
 
-        const result = await response.json();
+        eventSource.onmessage = (event) => {
+            if (event.data === '[DONE]') {
+                eventSource.close();
+                statusDiv.innerHTML = '<p class="success">Documents processed successfully! You can now create a chat to ask questions.</p>';
+                progressContainer.style.display = 'none';
+                loadProject();
+                return;
+            }
 
-        if (!response.ok) throw new Error(result.error || 'Processing failed');
+            try {
+                const data = JSON.parse(event.data);
 
-        statusDiv.innerHTML = '<p class="success">Documents processed successfully! You can now create a chat to ask questions.</p>';
-        loadProject();
+                // Update progress bar
+                if (data.progress !== undefined) {
+                    progressBar.style.width = data.progress + '%';
+                    progressText.textContent = data.progress + '%';
+                }
+
+                // Update status message
+                if (data.message) {
+                    statusDiv.innerHTML = `<p>${escapeHtml(data.message)}</p>`;
+                }
+
+                // Handle completion
+                if (data.stage === 'complete') {
+                    eventSource.close();
+                    statusDiv.innerHTML = '<p class="success">Documents processed successfully! You can now create a chat to ask questions.</p>';
+                    setTimeout(() => {
+                        progressContainer.style.display = 'none';
+                    }, 1000);
+                    loadProject();
+                }
+
+                // Handle errors
+                if (data.stage === 'error') {
+                    eventSource.close();
+                    statusDiv.innerHTML = '<p class="error">Error processing documents: ' + escapeHtml(data.message) + '</p>';
+                    progressContainer.style.display = 'none';
+                    processBtn.disabled = false;
+                }
+            } catch (parseError) {
+                console.error('Error parsing SSE data:', parseError);
+            }
+        };
+
+        eventSource.onerror = (error) => {
+            console.error('Error with SSE connection:', error);
+            eventSource.close();
+            statusDiv.innerHTML = '<p class="error">Error processing documents. Please try again.</p>';
+            progressContainer.style.display = 'none';
+            processBtn.disabled = false;
+        };
     } catch (error) {
         console.error('Error processing documents:', error);
         statusDiv.innerHTML = '<p class="error">Error processing documents: ' + error.message + '</p>';
+        progressContainer.style.display = 'none';
         processBtn.disabled = false;
     }
 }
@@ -211,6 +297,36 @@ async function deleteDocument(documentId) {
     } catch (error) {
         console.error('Error deleting document:', error);
         alert('Error deleting document');
+    }
+}
+
+async function deleteChat(chatId, event) {
+    // Prevent triggering the chat item click
+    if (event) {
+        event.stopPropagation();
+    }
+
+    if (!confirm('Are you sure you want to delete this chat?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/chats/${chatId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error('Delete failed');
+
+        // If the deleted chat was active, clear the chat area
+        if (chatId === currentChatId) {
+            currentChatId = null;
+            document.getElementById('chatArea').innerHTML = '<p class="empty-state">Select a chat from the sidebar to start asking questions about your documents.</p>';
+        }
+
+        loadProject();
+    } catch (error) {
+        console.error('Error deleting chat:', error);
+        alert('Error deleting chat');
     }
 }
 

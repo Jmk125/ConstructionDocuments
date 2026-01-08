@@ -96,11 +96,11 @@ function setupPDFViewerListeners() {
 
 async function loadChat(chatId) {
   try {
-    const response = await fetch(`${API_BASE}/chat/${chatId}`);
+    const response = await fetch(`${API_BASE}/chats/${chatId}`);
     const chat = await response.json();
-    
+
     currentChat = chat;
-    
+
     // Load project info
     const projectResponse = await fetch(`${API_BASE}/projects/${chat.project_id}`);
     currentProject = await projectResponse.json();
@@ -270,27 +270,27 @@ function formatInlineMarkdown(text) {
 async function sendMessage() {
   const input = document.getElementById('messageInput');
   const content = input.value.trim();
-  
+
   if (!content) return;
-  
+
   // Disable input while sending
   const sendBtn = document.getElementById('sendBtn');
   input.disabled = true;
   sendBtn.disabled = true;
   sendBtn.innerHTML = '<span class="spinner"></span>';
-  
+
   // Append user message immediately
   appendMessage('user', content);
   input.value = '';
   input.style.height = 'auto';
-  
+
   try {
-    const response = await fetch(`${API_BASE}/chat/${currentChat.id}/message`, {
+    const response = await fetch(`${API_BASE}/chats/${currentChat.id}/message`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ message: content })
     });
     
     if (!response.ok) {
@@ -299,15 +299,21 @@ async function sendMessage() {
     }
     
     const result = await response.json();
-    
+
     // Append assistant response
     appendMessage('assistant', result.content, result.citations);
-    
-    // Update chat title in sidebar if this was the first message
+
+    // Reload chat to get AI-generated title if this was the first message
     if (currentChat.title === 'New Chat') {
-      currentChat.title = content.substring(0, 50) + (content.length > 50 ? '...' : '');
-      document.getElementById('chatTitle').textContent = currentChat.title;
-      loadChatsList(currentChat.project_id, currentChat.id);
+      // Reload the chat to get the updated title
+      const chatResponse = await fetch(`${API_BASE}/chats/${currentChat.id}`);
+      const updatedChat = await chatResponse.json();
+
+      if (updatedChat.title && updatedChat.title !== 'New Chat') {
+        currentChat.title = updatedChat.title;
+        document.getElementById('chatTitle').textContent = updatedChat.title;
+        loadChatsList(currentChat.project_id, currentChat.id);
+      }
     }
   } catch (error) {
     console.error('Error sending message:', error);
@@ -322,7 +328,7 @@ async function sendMessage() {
 
 async function loadChatsList(projectId, currentChatId) {
   try {
-    const response = await fetch(`${API_BASE}/chat/project/${projectId}`);
+    const response = await fetch(`${API_BASE}/chats/project/${projectId}`);
     const chats = await response.json();
     
     const chatsList = document.getElementById('chatsList');
@@ -333,10 +339,12 @@ async function loadChatsList(projectId, currentChatId) {
     }
     
     chatsList.innerHTML = chats.map(chat => `
-      <div class="sidebar-chat-item ${chat.id === currentChatId ? 'active' : ''}" 
-           onclick="window.location.href='/chat.html?id=${chat.id}'">
-        <h5>${escapeHtml(chat.title || 'Untitled Chat')}</h5>
-        <p>${formatDate(chat.last_message_at)}</p>
+      <div class="sidebar-chat-item ${chat.id === currentChatId ? 'active' : ''}">
+        <div onclick="window.location.href='/chat.html?id=${chat.id}'" style="flex: 1; cursor: pointer;">
+          <h5>${escapeHtml(chat.title || 'Untitled Chat')}</h5>
+          <p>${formatDate(chat.updated_at || chat.created_at)}</p>
+        </div>
+        <button class="btn btn-danger btn-sm chat-delete-btn" onclick="deleteChatFromList(${chat.id}, event)" title="Delete chat">×</button>
       </div>
     `).join('');
   } catch (error) {
@@ -346,7 +354,7 @@ async function loadChatsList(projectId, currentChatId) {
 
 async function createNewChat() {
   try {
-    const response = await fetch(`${API_BASE}/chat`, {
+    const response = await fetch(`${API_BASE}/chats`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -371,15 +379,47 @@ async function createNewChat() {
 
 async function deleteChat() {
   try {
-    const response = await fetch(`${API_BASE}/chat/${currentChat.id}`, {
+    const response = await fetch(`${API_BASE}/chats/${currentChat.id}`, {
       method: 'DELETE'
     });
-    
+
     if (!response.ok) {
       throw new Error('Failed to delete chat');
     }
-    
+
     window.location.href = `/project.html?id=${currentProject.id}`;
+  } catch (error) {
+    console.error('Error deleting chat:', error);
+    showError('Failed to delete chat');
+  }
+}
+
+async function deleteChatFromList(chatId, event) {
+  // Prevent triggering the chat item click
+  if (event) {
+    event.stopPropagation();
+  }
+
+  if (!confirm('Are you sure you want to delete this chat?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/chats/${chatId}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to delete chat');
+    }
+
+    // If deleted chat is the current one, redirect to project page
+    if (chatId === currentChat.id) {
+      window.location.href = `/project.html?id=${currentProject.id}`;
+    } else {
+      // Just refresh the chat list
+      loadChatsList(currentProject.id, currentChat.id);
+    }
   } catch (error) {
     console.error('Error deleting chat:', error);
     showError('Failed to delete chat');
