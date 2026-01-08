@@ -160,7 +160,7 @@ async function uploadDocuments() {
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Uploading...';
     
-    const response = await fetch(`${API_BASE}/documents/upload/${currentProject.id}`, {
+    const response = await fetch(`${API_BASE}/documents/${currentProject.id}/upload`, {
       method: 'POST',
       body: formData
     });
@@ -194,7 +194,7 @@ async function processProjectDocuments() {
     processBtn.disabled = true;
     processingStatus.style.display = 'block';
     
-    const response = await fetch(`${API_BASE}/documents/process-project/${currentProject.id}`, {
+    const response = await fetch(`${API_BASE}/documents/${currentProject.id}/process`, {
       method: 'POST'
     });
     
@@ -202,15 +202,16 @@ async function processProjectDocuments() {
       throw new Error('Processing failed');
     }
     
-    const results = await response.json();
-    
+    const result = await response.json();
+
     processingStatus.style.display = 'none';
-    
+
     // Reload project to show processed documents
     await loadProject(currentProject.id);
-    
-    const successCount = results.filter(r => r.success).length;
-    alert(`Processing complete! ${successCount} of ${results.length} documents processed successfully.`);
+
+    const processResults = result.processResults || [];
+    const successCount = processResults.filter(r => r.success).length;
+    alert(`Processing complete! ${successCount} of ${processResults.length} documents processed successfully.\nEmbeddings: ${result.embeddingResults?.chunksProcessed || 0} chunks embedded.`);
   } catch (error) {
     console.error('Error processing documents:', error);
     processingStatus.style.display = 'none';
