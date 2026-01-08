@@ -206,9 +206,65 @@ function appendMessage(role, content, citations = []) {
 }
 
 function formatMessageContent(content) {
-  // Convert newlines to paragraphs
-  const paragraphs = content.split('\n\n');
-  return paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+  // Split into blocks (paragraphs, lists, etc.)
+  const blocks = content.split('\n\n');
+
+  return blocks.map(block => {
+    const lines = block.split('\n');
+
+    // Check if this is a bullet list (-, *, or •)
+    if (lines.every(line => /^[\s]*[-*•]\s+/.test(line) || line.trim() === '')) {
+      const items = lines
+        .filter(line => line.trim())
+        .map(line => {
+          const text = line.replace(/^[\s]*[-*•]\s+/, '');
+          return `<li>${formatInlineMarkdown(text)}</li>`;
+        })
+        .join('');
+      return `<ul>${items}</ul>`;
+    }
+
+    // Check if this is a numbered list
+    if (lines.every(line => /^[\s]*\d+\.\s+/.test(line) || line.trim() === '')) {
+      const items = lines
+        .filter(line => line.trim())
+        .map(line => {
+          const text = line.replace(/^[\s]*\d+\.\s+/, '');
+          return `<li>${formatInlineMarkdown(text)}</li>`;
+        })
+        .join('');
+      return `<ol>${items}</ol>`;
+    }
+
+    // Check for headers
+    if (/^#{1,3}\s+/.test(block)) {
+      const match = block.match(/^(#{1,3})\s+(.+)$/);
+      if (match) {
+        const level = match[1].length;
+        const text = match[2];
+        return `<h${level + 2}>${formatInlineMarkdown(text)}</h${level + 2}>`;
+      }
+    }
+
+    // Regular paragraph - handle multi-line within paragraph
+    const formattedLines = lines.map(line => formatInlineMarkdown(line)).join('<br>');
+    return `<p>${formattedLines}</p>`;
+  }).join('');
+}
+
+function formatInlineMarkdown(text) {
+  // Bold: **text** or __text__
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+  // Italic: *text* or _text_ (but not in middle of words)
+  text = text.replace(/\b_(.+?)_\b/g, '<em>$1</em>');
+  text = text.replace(/\*([^*]+?)\*/g, '<em>$1</em>');
+
+  // Inline code: `code`
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  return text;
 }
 
 async function sendMessage() {
