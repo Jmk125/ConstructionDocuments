@@ -188,7 +188,29 @@ async function searchRelevantChunks(projectId, query, topK = 10) {
 function formatChunksForContext(chunks) {
   return chunks.map((chunk, index) => {
     const docType = chunk.type === 'drawing' ? 'Drawing' : 'Specification';
-    return `[Source ${index + 1}: ${docType} - ${chunk.filename}, Page ${chunk.page_number}]\n${chunk.content}`;
+
+    // Prefer sheet number for drawings, fallback to page number
+    let location;
+    if (chunk.sheet_number) {
+      location = `Sheet ${chunk.sheet_number}`;
+    } else {
+      location = `Page ${chunk.page_number}`;
+    }
+
+    // Add detail references if available
+    let detailInfo = '';
+    if (chunk.detail_reference) {
+      try {
+        const details = JSON.parse(chunk.detail_reference);
+        if (details.length > 0) {
+          detailInfo = ` (Details: ${details.join(', ')})`;
+        }
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    }
+
+    return `[Source ${index + 1}: ${docType} - ${chunk.filename}, ${location}${detailInfo}]\n${chunk.content}`;
   }).join('\n\n---\n\n');
 }
 

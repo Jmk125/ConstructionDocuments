@@ -8,18 +8,45 @@ let db = null;
 
 async function initDatabase() {
   const SQL = await initSqlJs();
-  
+
   // Load existing database or create new one
   if (fs.existsSync(DB_PATH)) {
     const buffer = fs.readFileSync(DB_PATH);
     db = new SQL.Database(buffer);
+    runMigrations();
   } else {
     db = new SQL.Database();
     createTables();
     saveDatabase();
   }
-  
+
   return db;
+}
+
+function runMigrations() {
+  try {
+    // Check if sheet_number column exists in chunks table
+    const columns = db.exec("PRAGMA table_info(chunks)");
+    if (columns.length > 0) {
+      const columnNames = columns[0].values.map(row => row[1]);
+
+      // Add sheet_number column if it doesn't exist
+      if (!columnNames.includes('sheet_number')) {
+        console.log('Running migration: Adding sheet_number column to chunks table');
+        db.run('ALTER TABLE chunks ADD COLUMN sheet_number TEXT');
+        saveDatabase();
+      }
+
+      // Add detail_reference column if it doesn't exist
+      if (!columnNames.includes('detail_reference')) {
+        console.log('Running migration: Adding detail_reference column to chunks table');
+        db.run('ALTER TABLE chunks ADD COLUMN detail_reference TEXT');
+        saveDatabase();
+      }
+    }
+  } catch (error) {
+    console.error('Migration error:', error);
+  }
 }
 
 function createTables() {
@@ -54,6 +81,8 @@ function createTables() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       document_id INTEGER NOT NULL,
       page_number INTEGER NOT NULL,
+      sheet_number TEXT, -- Drawing sheet number (e.g., A-101, S-3.1)
+      detail_reference TEXT, -- Detail reference (e.g., "3/A-101")
       content TEXT NOT NULL,
       embedding TEXT, -- JSON string of embedding vector
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
