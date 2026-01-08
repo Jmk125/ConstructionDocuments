@@ -214,6 +214,13 @@ When answering:
 4. If you cannot find information in the provided documents, say so clearly
 5. For scope questions, be thorough and reference all relevant sections
 
+FORMATTING GUIDELINES:
+- Use **bold** for important terms, requirements, or key points
+- Use bullet points (-) for lists of items, requirements, or findings
+- Use numbered lists (1. 2. 3.) for sequential steps or prioritized items
+- Use headers (##) to organize longer responses into sections
+- Structure your responses for easy readability
+
 Available document context:
 ${context}`
     }
