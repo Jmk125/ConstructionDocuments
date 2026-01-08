@@ -2,7 +2,11 @@
 
 ## Error: "pdf is not a function"
 
-This error occurs when the `pdf-parse` module isn't loading correctly. Here are steps to fix it:
+This error occurs when you have **pdf-parse version 2.x** installed, which has a completely different API than version 1.x.
+
+### The Solution
+
+The Construction AI app requires **pdf-parse version 1.1.1**. Here's how to fix it:
 
 ### Step 1: Test Current Installation
 
@@ -11,31 +15,44 @@ Run the diagnostic script:
 node test-pdf-parse.js
 ```
 
-This will tell you exactly what's wrong with the pdf-parse module.
+If you see "pdf-parse is not a function" and "You have version 2.x installed", continue to Step 2.
 
-### Step 2: Reinstall pdf-parse
+### Step 2: Install the Correct Version
 
-If the test fails, try reinstalling the module:
+**IMPORTANT:** You must install pdf-parse version 1.1.1 specifically:
 
 ```bash
-# Delete node_modules and package-lock.json
-rm -rf node_modules package-lock.json
+# Uninstall current version
+npm uninstall pdf-parse
 
-# Or on Windows:
-rmdir /s /q node_modules
-del package-lock.json
+# Install version 1.1.1
+npm install pdf-parse@1.1.1
 
-# Reinstall all dependencies
-npm install
+# Verify installation
+node test-pdf-parse.js
 ```
 
-### Step 3: Alternative - Manual Reinstall of pdf-parse
+### Step 3: Restart Your Server
 
-If the above doesn't work, try reinstalling just pdf-parse:
+After reinstalling, restart the Node.js server:
 
 ```bash
-npm uninstall pdf-parse
-npm install pdf-parse@1.1.1
+npm start
+```
+
+### Alternative: Full Reinstall
+
+If the above doesn't work, do a complete reinstall:
+
+```bash
+# On Windows Command Prompt:
+rmdir /s /q node_modules
+del package-lock.json
+npm install
+
+# On Mac/Linux:
+rm -rf node_modules package-lock.json
+npm install
 ```
 
 ### Step 4: Check for Missing Dependencies
