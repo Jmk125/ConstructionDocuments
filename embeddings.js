@@ -228,9 +228,182 @@ function formatChunksForContext(chunks) {
   }).join('\n\n---\n\n');
 }
 
+/**
+ * Convert visual findings JSON to searchable text for embedding
+ */
+function visualFindingsToText(findings) {
+  try {
+    const parsed = typeof findings === 'string' ? JSON.parse(findings) : findings;
+
+    const parts = [parsed.summary || ''];
+
+    // Add elements descriptions
+    if (parsed.elements && parsed.elements.length > 0) {
+      parsed.elements.forEach(el => {
+        const elementText = [
+          el.type,
+          el.shape,
+          el.location,
+          el.dimensions,
+          el.materials,
+          el.notes
+        ].filter(Boolean).join(' ');
+        parts.push(elementText);
+      });
+    }
+
+    // Add annotations
+    if (parsed.annotations && parsed.annotations.length > 0) {
+      parts.push(parsed.annotations.join(' '));
+    }
+
+    // Add symbols
+    if (parsed.symbols && parsed.symbols.length > 0) {
+      parts.push(parsed.symbols.join(' '));
+    }
+
+    // Add detail markers
+    if (parsed.detailMarkers && parsed.detailMarkers.length > 0) {
+      parts.push(parsed.detailMarkers.join(' '));
+    }
+
+    return parts.filter(Boolean).join(' ');
+  } catch (error) {
+    console.error('Error parsing visual findings:', error);
+    return typeof findings === 'string' ? findings : '';
+  }
+}
+
+/**
+ * Generate embeddings for all visual findings without embeddings
+ */
+async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
+  if (!openai) {
+    throw new Error('OpenAI not initialized');
+  }
+
+  // Get all visual findings for this project without embeddings
+  const findings = getQuery(`
+    SELECT vf.* FROM visual_findings vf
+    JOIN documents d ON vf.document_id = d.id
+    WHERE d.project_id = ? AND vf.embedding IS NULL
+  `, [projectId]);
+
+  if (findings.length === 0) {
+    console.log('No visual findings need embeddings');
+    return { findingsProcessed: 0 };
+  }
+
+  console.log(`Generating embeddings for ${findings.length} visual findings...`);
+
+  let processed = 0;
+  const batchSize = 10; // Visual findings are typically smaller than full chunks
+
+  for (let i = 0; i < findings.length; i += batchSize) {
+    const batch = findings.slice(i, i + batchSize);
+    const texts = batch.map(finding => visualFindingsToText(finding.findings));
+
+    try {
+      console.log(`Processing visual findings batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(findings.length / batchSize)}...`);
+
+      const response = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: texts
+      });
+
+      // Store embeddings
+      for (let j = 0; j < batch.length; j++) {
+        const finding = batch[j];
+        const embedding = response.data[j].embedding;
+
+        runQuery(
+          'UPDATE visual_findings SET embedding = ? WHERE id = ?',
+          [JSON.stringify(embedding), finding.id]
+        );
+      }
+
+      processed += batch.length;
+      console.log(`✓ Processed ${processed}/${findings.length} visual findings`);
+
+      if (onProgress) {
+        onProgress(processed, findings.length);
+      }
+
+      // Small delay to avoid rate limiting
+      if (i + batchSize < findings.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+    } catch (error) {
+      console.error('Error generating embeddings for visual findings batch:', error.message);
+      // Continue with next batch
+    }
+  }
+
+  return { findingsProcessed: processed };
+}
+
+/**
+ * Search both chunks and visual findings, returning combined results
+ */
+async function searchRelevantContent(projectId, query, topK = 10) {
+  if (!openai) {
+    throw new Error('OpenAI not initialized');
+  }
+
+  // Generate embedding for query
+  const response = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: query
+  });
+
+  const queryEmbedding = response.data[0].embedding;
+
+  // Get all chunks with embeddings
+  const chunks = getQuery(`
+    SELECT c.*, d.filename, d.type, 'chunk' as source_type
+    FROM chunks c
+    JOIN documents d ON c.document_id = d.id
+    WHERE d.project_id = ? AND c.embedding IS NOT NULL
+  `, [projectId]);
+
+  // Get all visual findings with embeddings
+  const visualFindings = getQuery(`
+    SELECT vf.*, d.filename, d.type, 'visual_finding' as source_type
+    FROM visual_findings vf
+    JOIN documents d ON vf.document_id = d.id
+    WHERE d.project_id = ? AND vf.embedding IS NOT NULL
+  `, [projectId]);
+
+  // Combine and score all content
+  const allContent = [...chunks, ...visualFindings];
+
+  if (allContent.length === 0) {
+    return [];
+  }
+
+  const scoredContent = allContent.map(item => {
+    const itemEmbedding = JSON.parse(item.embedding);
+    const similarity = cosineSimilarity(queryEmbedding, itemEmbedding);
+
+    return {
+      ...item,
+      similarity
+    };
+  });
+
+  // Sort by similarity and return top K
+  scoredContent.sort((a, b) => b.similarity - a.similarity);
+
+  return scoredContent.slice(0, topK);
+}
+
 module.exports = {
   initOpenAI,
   generateEmbeddings,
+  generateVisualFindingsEmbeddings,
   searchRelevantChunks,
-  formatChunksForContext
+  searchRelevantContent,
+  formatChunksForContext,
+  visualFindingsToText
 };
