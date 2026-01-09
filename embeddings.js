@@ -7,6 +7,39 @@ function initOpenAI(apiKey) {
   openai = new OpenAI({ apiKey });
 }
 
+function isQuotaError(error) {
+  const message = (error && error.message) || '';
+  const code = error && error.error && error.error.code;
+  const type = error && error.error && error.error.type;
+
+  return (
+    error &&
+    error.status === 429 &&
+    (code === 'insufficient_quota' ||
+      type === 'insufficient_quota' ||
+      /insufficient quota|quota exceeded|billing/i.test(message))
+  );
+}
+
+function isRateLimitError(error) {
+  return error && error.status === 429 && !isQuotaError(error);
+}
+
+function getRetryDelayMs(error, attempt) {
+  const retryAfter = error && error.headers && (error.headers['retry-after'] || error.headers['Retry-After']);
+  const retryAfterSeconds = retryAfter ? Number.parseInt(retryAfter, 10) : NaN;
+
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return retryAfterSeconds * 1000;
+  }
+
+  const baseDelay = 5000;
+  const maxDelay = 60000;
+  const delay = Math.min(maxDelay, baseDelay * (2 ** attempt));
+  const jitter = Math.floor(Math.random() * 1000);
+  return delay + jitter;
+}
+
 /**
  * Generate embeddings for all unprocessed chunks in a project
  * @param {number} projectId - The project ID
@@ -26,7 +59,7 @@ async function generateEmbeddings(projectId, onProgress = null) {
 
   if (chunks.length === 0) {
     console.log('No chunks need embeddings - all chunks already processed');
-    return { chunksProcessed: 0 };
+    return { chunksProcessed: 0, pausedForQuota: false };
   }
 
   console.log(`Generating embeddings for ${chunks.length} chunks...`);
@@ -36,6 +69,7 @@ async function generateEmbeddings(projectId, onProgress = null) {
   // Each chunk ~1500 tokens, batch of 2 = 3000 tokens
   // With 2 second delay = 1800 tokens/sec = 108k TPM (well under 200k limit)
   const batchSize = 2; // Reduced to 2 for strict rate limit compliance
+  const maxRetries = 5;
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
@@ -48,11 +82,35 @@ async function generateEmbeddings(projectId, onProgress = null) {
       const approxTokens = texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0);
       console.log(`  Estimated tokens: ${approxTokens}`);
 
-      // Generate embeddings for batch
-      const response = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: texts
-      });
+      let response;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          response = await openai.embeddings.create({
+            model: 'text-embedding-3-small',
+            input: texts
+          });
+          break;
+        } catch (requestError) {
+          if (isQuotaError(requestError)) {
+            console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+            return {
+              chunksProcessed: processed,
+              pausedForQuota: true,
+              remainingChunks: chunks.length - processed,
+              message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
+            };
+          }
+
+          if (isRateLimitError(requestError) && attempt < maxRetries) {
+            const delayMs = getRetryDelayMs(requestError, attempt);
+            console.log(`⚠️  Rate limit hit. Waiting ${Math.round(delayMs / 1000)}s before retry ${attempt + 1}/${maxRetries}...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
+
+          throw requestError;
+        }
+      }
 
       // Store embeddings
       for (let j = 0; j < batch.length; j++) {
@@ -88,40 +146,14 @@ async function generateEmbeddings(projectId, onProgress = null) {
         textLengths: texts.map(t => t.length)
       });
 
-      // If rate limit error, wait and retry with exponential backoff
-      if (error.status === 429) {
-        console.log('⚠️  Rate limit hit. Waiting 60 seconds before retry...');
-        await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
-
-        // Retry this batch
-        console.log('Retrying batch after rate limit wait...');
-        try {
-          const response = await openai.embeddings.create({
-            model: 'text-embedding-3-small',
-            input: texts
-          });
-
-          for (let j = 0; j < batch.length; j++) {
-            const chunk = batch[j];
-            const embedding = response.data[j].embedding;
-            runQuery(
-              'UPDATE chunks SET embedding = ? WHERE id = ?',
-              [JSON.stringify(embedding), chunk.id]
-            );
-          }
-
-          processed += batch.length;
-          console.log(`✓ Retry successful: ${processed}/${chunks.length} chunks`);
-
-          if (onProgress) {
-            onProgress(processed, chunks.length);
-          }
-        } catch (retryError) {
-          console.error('Retry failed:', retryError.message);
-          throw retryError; // Give up after one retry
-        }
-
-        continue; // Skip the rest of error handling
+      if (isQuotaError(error)) {
+        console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+        return {
+          chunksProcessed: processed,
+          pausedForQuota: true,
+          remainingChunks: chunks.length - processed,
+          message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
+        };
       }
 
       // If token limit error, try processing chunks one at a time
@@ -135,10 +167,35 @@ async function generateEmbeddings(projectId, onProgress = null) {
 
             console.log(`  Processing chunk ${chunk.id} individually (${text.length} chars)...`);
 
-            const response = await openai.embeddings.create({
-              model: 'text-embedding-3-small',
-              input: [text]
-            });
+            let response;
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+              try {
+                response = await openai.embeddings.create({
+                  model: 'text-embedding-3-small',
+                  input: [text]
+                });
+                break;
+              } catch (requestError) {
+                if (isQuotaError(requestError)) {
+                  console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+                  return {
+                    chunksProcessed: processed,
+                    pausedForQuota: true,
+                    remainingChunks: chunks.length - processed,
+                    message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
+                  };
+                }
+
+                if (isRateLimitError(requestError) && attempt < maxRetries) {
+                  const delayMs = getRetryDelayMs(requestError, attempt);
+                  console.log(`⚠️  Rate limit hit. Waiting ${Math.round(delayMs / 1000)}s before retry ${attempt + 1}/${maxRetries}...`);
+                  await new Promise(resolve => setTimeout(resolve, delayMs));
+                  continue;
+                }
+
+                throw requestError;
+              }
+            }
 
             const embedding = response.data[0].embedding;
             runQuery(
@@ -166,7 +223,7 @@ async function generateEmbeddings(projectId, onProgress = null) {
     }
   }
 
-  return { chunksProcessed: processed };
+  return { chunksProcessed: processed, pausedForQuota: false };
 }
 
 /**
@@ -328,13 +385,14 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
 
   if (findings.length === 0) {
     console.log('No visual findings need embeddings');
-    return { findingsProcessed: 0 };
+    return { findingsProcessed: 0, pausedForQuota: false };
   }
 
   console.log(`Generating embeddings for ${findings.length} visual findings...`);
 
   let processed = 0;
   const batchSize = 10; // Visual findings are typically smaller than full chunks
+  const maxRetries = 5;
 
   for (let i = 0; i < findings.length; i += batchSize) {
     const batch = findings.slice(i, i + batchSize);
@@ -343,10 +401,35 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
     try {
       console.log(`Processing visual findings batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(findings.length / batchSize)}...`);
 
-      const response = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: texts
-      });
+      let response;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          response = await openai.embeddings.create({
+            model: 'text-embedding-3-small',
+            input: texts
+          });
+          break;
+        } catch (requestError) {
+          if (isQuotaError(requestError)) {
+            console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.');
+            return {
+              findingsProcessed: processed,
+              pausedForQuota: true,
+              remainingFindings: findings.length - processed,
+              message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
+            };
+          }
+
+          if (isRateLimitError(requestError) && attempt < maxRetries) {
+            const delayMs = getRetryDelayMs(requestError, attempt);
+            console.log(`⚠️  Rate limit hit. Waiting ${Math.round(delayMs / 1000)}s before retry ${attempt + 1}/${maxRetries}...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
+
+          throw requestError;
+        }
+      }
 
       // Store embeddings
       for (let j = 0; j < batch.length; j++) {
@@ -373,11 +456,20 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
 
     } catch (error) {
       console.error('Error generating embeddings for visual findings batch:', error.message);
+      if (isQuotaError(error)) {
+        console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.');
+        return {
+          findingsProcessed: processed,
+          pausedForQuota: true,
+          remainingFindings: findings.length - processed,
+          message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
+        };
+      }
       // Continue with next batch
     }
   }
 
-  return { findingsProcessed: processed };
+  return { findingsProcessed: processed, pausedForQuota: false };
 }
 
 /**
