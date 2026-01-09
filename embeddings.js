@@ -222,7 +222,9 @@ function formatChunksForContext(chunks) {
       }
     }
 
-    return `[Source ${index + 1}: ${docType} - ${chunk.filename}, ${location}${detailInfo}]\n${chunk.content}`;
+    const ocrInfo = chunk.ocr_text ? `\n[OCR Text]\n${chunk.ocr_text}` : '';
+
+    return `[Source ${index + 1}: ${docType} - ${chunk.filename}, ${location}${detailInfo}]\n${chunk.content}${ocrInfo}`;
   }).join('\n\n---\n\n');
 }
 
