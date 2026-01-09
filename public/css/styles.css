@@ -801,6 +801,50 @@ header p {
     background: white;
 }
 
+.model-selector-container {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.model-selector-container label {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.model-select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    background: white;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.model-select:hover {
+    border-color: #3498db;
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.model-description {
+    color: #6c757d;
+    font-size: 0.85rem;
+    font-style: italic;
+    flex: 1;
+}
+
 .input-container {
     display: flex;
     gap: 1rem;

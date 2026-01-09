@@ -44,9 +44,16 @@
       </div>
 
       <form id="messageForm" class="message-form">
+        <div class="model-selector-container">
+          <label for="modelSelect">AI Model:</label>
+          <select id="modelSelect" class="model-select">
+            <option value="gpt-4o">GPT-4o (Balanced)</option>
+          </select>
+          <span id="modelDescription" class="model-description">Loading models...</span>
+        </div>
         <div class="input-container">
-          <textarea 
-            id="messageInput" 
+          <textarea
+            id="messageInput"
             placeholder="Ask about your construction documents..."
             rows="1"
           ></textarea>

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getQuery, getOneQuery, runQuery } = require('../database');
-const { createChat, sendMessage, getChatHistory, deleteOldChats } = require('../chatHandler');
+const { createChat, sendMessage, getChatHistory, deleteOldChats, getAvailableModels } = require('../chatHandler');
 
 // Get all chats for a project
 router.get('/project/:projectId', (req, res) => {
@@ -65,16 +65,29 @@ router.get('/:chatId', (req, res) => {
   }
 });
 
+// Get available AI models
+router.get('/models', (req, res) => {
+  try {
+    const models = getAvailableModels();
+    res.json(models);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Send message in chat
 router.post('/:chatId/message', async (req, res) => {
   try {
-    const { message } = req.body;
-    
+    const { message, model } = req.body;
+
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    const response = await sendMessage(req.params.chatId, message);
+    // Default to gpt-4o if no model specified
+    const selectedModel = model || 'gpt-4o';
+
+    const response = await sendMessage(req.params.chatId, message, selectedModel);
     res.json(response);
   } catch (error) {
     console.error('Error sending message:', error);
