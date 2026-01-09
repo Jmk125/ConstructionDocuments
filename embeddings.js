@@ -32,10 +32,10 @@ async function generateEmbeddings(projectId, onProgress = null) {
   console.log(`Generating embeddings for ${chunks.length} chunks...`);
 
   let processed = 0;
-  // Reduced batch size to avoid token limits
+  // Reduced batch size to avoid token AND rate limits
   // OpenAI embedding API has 8192 token limit per request (all inputs combined)
-  // With truncated chunks (~1500 tokens max each), batches of 5 should be safe
-  const batchSize = 5;
+  // With truncated chunks (~1500 tokens max each), batches of 3 are safer for rate limits
+  const batchSize = 3; // Reduced from 5 to 3 for better rate limit compliance
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
@@ -73,9 +73,9 @@ async function generateEmbeddings(projectId, onProgress = null) {
         onProgress(processed, chunks.length);
       }
 
-      // Small delay to avoid rate limiting
+      // Delay to avoid rate limiting (increased for Tier 1 TPM limits)
       if (i + batchSize < chunks.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Increased to 500ms
       }
 
     } catch (error) {
@@ -329,9 +329,9 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
         onProgress(processed, findings.length);
       }
 
-      // Small delay to avoid rate limiting
+      // Delay to avoid rate limiting (increased for Tier 1 TPM limits)
       if (i + batchSize < findings.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Increased to 500ms
       }
 
     } catch (error) {
