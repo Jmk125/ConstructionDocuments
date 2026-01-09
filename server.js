@@ -41,8 +41,16 @@ async function startServer() {
       console.warn('Please create a .env file with your OpenAI API key');
     } else {
       initEmbeddingsOpenAI(process.env.OPENAI_API_KEY);
-      initChatOpenAI(process.env.OPENAI_API_KEY);
       console.log('OpenAI initialized successfully');
+    }
+
+    // Initialize Claude (optional)
+    if (process.env.ANTHROPIC_API_KEY) {
+      initChatOpenAI(process.env.OPENAI_API_KEY, process.env.ANTHROPIC_API_KEY);
+      console.log('Claude API initialized successfully');
+    } else {
+      initChatOpenAI(process.env.OPENAI_API_KEY);
+      console.log('Claude API not configured (ANTHROPIC_API_KEY not set)');
     }
 
     // Start server

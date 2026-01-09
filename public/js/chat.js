@@ -4,6 +4,7 @@ let currentChat = null;
 let currentProject = null;
 let pdfDoc = null;
 let currentPage = 1;
+let availableModels = [];
 
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
+  loadAvailableModels();
   loadChat(chatId);
   setupEventListeners();
 });
@@ -26,18 +28,19 @@ function setupEventListeners() {
   const messageInput = document.getElementById('messageInput');
   const newChatBtn = document.getElementById('newChatBtn');
   const deleteChatBtn = document.getElementById('deleteChatBtn');
-  
+  const modelSelect = document.getElementById('modelSelect');
+
   messageForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     await sendMessage();
   });
-  
+
   // Auto-resize textarea
   messageInput.addEventListener('input', () => {
     messageInput.style.height = 'auto';
     messageInput.style.height = messageInput.scrollHeight + 'px';
   });
-  
+
   // Allow Ctrl+Enter to send
   messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -45,19 +48,24 @@ function setupEventListeners() {
       messageForm.dispatchEvent(new Event('submit'));
     }
   });
-  
+
+  // Update model description when selection changes
+  modelSelect.addEventListener('change', () => {
+    updateModelDescription();
+  });
+
   newChatBtn.addEventListener('click', async () => {
     if (currentProject) {
       await createNewChat();
     }
   });
-  
+
   deleteChatBtn.addEventListener('click', async () => {
     if (confirm('Are you sure you want to delete this chat?')) {
       await deleteChat();
     }
   });
-  
+
   setupPDFViewerListeners();
 }
 
@@ -267,9 +275,40 @@ function formatInlineMarkdown(text) {
   return text;
 }
 
+async function loadAvailableModels() {
+  try {
+    const response = await fetch(`${API_BASE}/chats/models`);
+    availableModels = await response.json();
+
+    const modelSelect = document.getElementById('modelSelect');
+    modelSelect.innerHTML = availableModels.map(model =>
+      `<option value="${model.id}">${model.name}</option>`
+    ).join('');
+
+    // Update description for default model
+    updateModelDescription();
+  } catch (error) {
+    console.error('Error loading models:', error);
+    document.getElementById('modelDescription').textContent = 'Using default model';
+  }
+}
+
+function updateModelDescription() {
+  const modelSelect = document.getElementById('modelSelect');
+  const selectedModelId = modelSelect.value;
+  const model = availableModels.find(m => m.id === selectedModelId);
+
+  const descriptionEl = document.getElementById('modelDescription');
+  if (model) {
+    descriptionEl.textContent = model.description;
+  }
+}
+
 async function sendMessage() {
   const input = document.getElementById('messageInput');
   const content = input.value.trim();
+  const modelSelect = document.getElementById('modelSelect');
+  const selectedModel = modelSelect.value;
 
   if (!content) return;
 
@@ -277,6 +316,7 @@ async function sendMessage() {
   const sendBtn = document.getElementById('sendBtn');
   input.disabled = true;
   sendBtn.disabled = true;
+  modelSelect.disabled = true;
   sendBtn.innerHTML = '<span class="spinner"></span>';
 
   // Append user message immediately
@@ -290,7 +330,10 @@ async function sendMessage() {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ message: content })
+      body: JSON.stringify({
+        message: content,
+        model: selectedModel
+      })
     });
     
     if (!response.ok) {
@@ -321,6 +364,7 @@ async function sendMessage() {
   } finally {
     input.disabled = false;
     sendBtn.disabled = false;
+    modelSelect.disabled = false;
     sendBtn.innerHTML = '<span>Send</span>';
     input.focus();
   }

@@ -1,11 +1,14 @@
 const OpenAI = require('openai');
 const { runQuery, getQuery, getOneQuery } = require('./database');
 const { searchRelevantChunks, searchRelevantContent, formatChunksForContext } = require('./embeddings');
+const { initAI, generateResponse, getAvailableModels } = require('./aiHandler');
 
 let openai = null;
 
-function initOpenAI(apiKey) {
+function initOpenAI(apiKey, anthropicKey) {
   openai = new OpenAI({ apiKey });
+  // Initialize the AI handler with both API keys
+  initAI(apiKey, anthropicKey);
 }
 
 /**
@@ -272,9 +275,33 @@ function extractCitations(content) {
 }
 
 /**
+ * Enhanced search function that returns structured data for AI handler
+ */
+async function searchForAI(projectId, query, limit = 15) {
+  const relevantContent = await searchRelevantContent(projectId, query, limit);
+
+  // Separate chunks from visual findings
+  const chunks = relevantContent
+    .filter(item => item.source_type === 'chunk')
+    .map(item => item);
+
+  const visualFindings = relevantContent
+    .filter(item => item.source_type === 'visual_finding')
+    .map(item => item);
+
+  // Expand chunks with callouts
+  const expandedChunks = expandChunksWithCallouts(chunks, projectId);
+
+  return {
+    chunks: expandedChunks,
+    visualFindings: visualFindings
+  };
+}
+
+/**
  * Send message and get response
  */
-async function sendMessage(chatId, userMessage) {
+async function sendMessage(chatId, userMessage, selectedModel = 'gpt-4o') {
   if (!openai) {
     throw new Error('OpenAI not initialized');
   }
@@ -297,16 +324,9 @@ async function sendMessage(chatId, userMessage) {
 
   // Search for relevant content (both chunks and visual findings)
   console.log('Searching for relevant document content (text + vision)...');
-  const relevantContent = await searchRelevantContent(chat.project_id, userMessage, 15);
+  const searchResults = await searchForAI(chat.project_id, userMessage, 15);
 
-  // Separate chunks from visual findings
-  const relevantChunks = relevantContent.filter(item => item.source_type === 'chunk');
-  const relevantVisualFindings = relevantContent.filter(item => item.source_type === 'visual_finding');
-
-  // Expand chunks with callouts
-  const expandedChunks = expandChunksWithCallouts(relevantChunks, chat.project_id);
-
-  if (expandedChunks.length === 0 && relevantVisualFindings.length === 0) {
+  if (searchResults.chunks.length === 0 && searchResults.visualFindings.length === 0) {
     const noDocsMessage = "I don't have any processed documents for this project yet. Please upload and process documents first.";
     addMessage(chatId, 'assistant', noDocsMessage);
     return {
@@ -316,75 +336,25 @@ async function sendMessage(chatId, userMessage) {
     };
   }
 
-  // Format context from relevant chunks and visual findings
-  let context = '';
+  // Get chat history for context (excluding current user message)
+  const history = getChatHistory(chatId).slice(0, -1);
 
-  if (expandedChunks.length > 0) {
-    context += formatChunksForContext(expandedChunks);
-  }
+  console.log(`Generating response using ${selectedModel}...`);
 
-  if (relevantVisualFindings.length > 0) {
-    context += '\n\n' + formatVisualFindingsFromSearch(relevantVisualFindings);
-  }
-
-  // Get chat history for full context
-  const history = getChatHistory(chatId);
-  
-  // Build messages for GPT
-  const messages = [
+  // Use the new AI handler with all enhancements
+  const assistantMessage = await generateResponse(
+    userMessage,
+    searchForAI,
+    chat.project_id,
+    history,
+    project.name,
+    selectedModel,
     {
-      role: 'system',
-      content: `You are a helpful assistant analyzing construction documents for project "${project.name}".
-
-Your task is to answer questions about the construction drawings and specifications based on the provided document excerpts.
-
-When answering:
-1. Be specific and cite your sources. For drawings with sheet numbers, use the format: [Source Name, Sheet X-###]
-   For specifications or documents without sheet numbers, use: [Source Name, Page X]
-2. When referencing specific details, use the format: [Source Name, Detail #/Sheet]
-   Example: [Drawing A-101, Detail 3/A-101]
-3. If information is found in multiple locations, cite all relevant sources
-4. If you cannot find information in the provided documents, say so clearly
-5. For scope questions, be thorough and reference all relevant sections
-
-FORMATTING GUIDELINES:
-- Use **bold** for important terms, requirements, or key points
-- Use bullet points (-) for lists of items, requirements, or findings
-- Use numbered lists (1. 2. 3.) for sequential steps or prioritized items
-- Use headers (##) to organize longer responses into sections
-- Structure your responses for easy readability
-
-Available document context:
-${context}`
+      useMultiQuery: true,
+      useQueryDecomposition: true,
+      relevantContentLimit: 15
     }
-  ];
-
-  // Add chat history (excluding the last user message we just added)
-  for (let i = 0; i < history.length - 1; i++) {
-    const msg = history[i];
-    messages.push({
-      role: msg.role,
-      content: msg.content
-    });
-  }
-
-  // Add current user message
-  messages.push({
-    role: 'user',
-    content: userMessage
-  });
-
-  console.log('Sending request to GPT...');
-
-  // Get response from GPT
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: messages,
-    temperature: 0.7,
-    max_tokens: 2000
-  });
-
-  const assistantMessage = completion.choices[0].message.content;
+  );
 
   // Extract citations
   let citations = extractCitations(assistantMessage);
@@ -437,5 +407,6 @@ module.exports = {
   createChat,
   getChatHistory,
   sendMessage,
-  deleteOldChats
+  deleteOldChats,
+  getAvailableModels
 };
