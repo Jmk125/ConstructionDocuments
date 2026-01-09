@@ -104,7 +104,7 @@ function displayChats(chats) {
     }
 
     container.innerHTML = chats.map(chat => `
-        <div class="chat-item ${chat.id === currentChatId ? 'active' : ''}">
+        <div class="chat-item ${chat.id === currentChatId ? 'active' : ''}" data-chat-id="${chat.id}">
             <div onclick="loadChat(${chat.id})" style="flex: 1; cursor: pointer;">
                 <div class="chat-item-title">${escapeHtml(chat.title || 'Untitled Chat')}</div>
                 <div class="chat-item-date">${formatDate(chat.updated_at)}</div>
@@ -353,15 +353,17 @@ async function createNewChat() {
 }
 
 async function loadChat(chatId) {
-    currentChatId = chatId;
+    const targetChatId = Number(chatId);
+    currentChatId = targetChatId;
     
     // Update chat list selection
     document.querySelectorAll('.chat-item').forEach(item => {
-        item.classList.toggle('active', item.onclick.toString().includes(chatId));
+        const itemChatId = Number(item.dataset.chatId);
+        item.classList.toggle('active', itemChatId === targetChatId);
     });
 
     try {
-        const response = await fetch(`${API_BASE}/chats/${chatId}`);
+        const response = await fetch(`${API_BASE}/chats/${targetChatId}`);
         const chat = await response.json();
 
         displayChatMessages(chat.messages || []);
