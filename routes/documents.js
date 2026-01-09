@@ -4,8 +4,9 @@ const multer = require('multer');
 const path = require('path');
 const { runQuery, getQuery, getOneQuery } = require('../database');
 const { processProject } = require('../documentProcessor');
-const { generateEmbeddings } = require('../embeddings');
+const { generateEmbeddings, generateVisualFindingsEmbeddings } = require('../embeddings');
 const { analyzeProjectVision } = require('../services/vision');
+const { processProjectOCR } = require('../services/ocr');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -195,6 +196,61 @@ router.post('/:projectId/vision', async (req, res) => {
     const results = await analyzeProjectVision(projectId, { limit });
     res.json({ message: 'Vision analysis complete', results });
   } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Process OCR for drawing images in a project
+router.post('/:projectId/ocr', async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+    const limit = Number.parseInt(req.body.limit, 10) || 25;
+
+    console.log(`\n========================================`);
+    console.log(`Starting OCR processing for project ${projectId}...`);
+    console.log(`========================================\n`);
+
+    const results = await processProjectOCR(projectId, { limit });
+
+    console.log(`\n========================================`);
+    console.log(`OCR processing complete for project ${projectId}`);
+    console.log(`========================================\n`);
+
+    res.json({
+      message: 'OCR processing complete',
+      ...results
+    });
+  } catch (error) {
+    console.error('\n========================================');
+    console.error('ERROR processing OCR:', error);
+    console.error('========================================\n');
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Generate embeddings for visual findings
+router.post('/:projectId/embed-visual-findings', async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+
+    console.log(`\n========================================`);
+    console.log(`Generating embeddings for visual findings (project ${projectId})...`);
+    console.log(`========================================\n`);
+
+    const results = await generateVisualFindingsEmbeddings(projectId);
+
+    console.log(`\n========================================`);
+    console.log(`Visual findings embeddings complete`);
+    console.log(`========================================\n`);
+
+    res.json({
+      message: 'Visual findings embeddings generated',
+      ...results
+    });
+  } catch (error) {
+    console.error('\n========================================');
+    console.error('ERROR generating visual findings embeddings:', error);
+    console.error('========================================\n');
     res.status(500).json({ error: error.message, stack: error.stack });
   }
 });

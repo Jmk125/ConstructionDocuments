@@ -57,6 +57,24 @@ function runMigrations() {
       }
     }
 
+    // Check if embedding column exists in visual_findings table
+    const vfColumns = db.exec("PRAGMA table_info(visual_findings)");
+    if (vfColumns.length > 0) {
+      const vfColumnNames = vfColumns[0].values.map(row => row[1]);
+
+      if (!vfColumnNames.includes('embedding')) {
+        console.log('Running migration: Adding embedding column to visual_findings table');
+        db.run('ALTER TABLE visual_findings ADD COLUMN embedding TEXT');
+        saveDatabase();
+      }
+
+      if (!vfColumnNames.includes('sheet_type')) {
+        console.log('Running migration: Adding sheet_type column to visual_findings table');
+        db.run('ALTER TABLE visual_findings ADD COLUMN sheet_type TEXT');
+        saveDatabase();
+      }
+    }
+
     db.run(`
       CREATE TABLE IF NOT EXISTS callouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,7 +194,9 @@ function createTables() {
       document_id INTEGER NOT NULL,
       page_number INTEGER NOT NULL,
       sheet_number TEXT,
+      sheet_type TEXT,
       findings TEXT NOT NULL,
+      embedding TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
     )

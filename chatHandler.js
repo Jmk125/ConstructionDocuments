@@ -1,6 +1,6 @@
 const OpenAI = require('openai');
 const { runQuery, getQuery, getOneQuery } = require('./database');
-const { searchRelevantChunks, formatChunksForContext } = require('./embeddings');
+const { searchRelevantChunks, searchRelevantContent, formatChunksForContext } = require('./embeddings');
 
 let openai = null;
 
@@ -171,6 +171,51 @@ function formatVisualFindings(projectId, chunks) {
 }
 
 /**
+ * Format visual findings that came from semantic search
+ */
+function formatVisualFindingsFromSearch(visualFindings) {
+  if (visualFindings.length === 0) {
+    return '';
+  }
+
+  const formatted = visualFindings.map((finding, index) => {
+    const location = finding.sheet_number
+      ? `Sheet ${finding.sheet_number}`
+      : `Page ${finding.page_number}`;
+
+    let findingsText = '';
+    try {
+      const parsed = typeof finding.findings === 'string'
+        ? JSON.parse(finding.findings)
+        : finding.findings;
+
+      findingsText = parsed.summary || '';
+
+      // Add elements if present
+      if (parsed.elements && parsed.elements.length > 0) {
+        const elementsSummary = parsed.elements
+          .map(el => `${el.type}${el.dimensions ? ` (${el.dimensions})` : ''}`)
+          .slice(0, 5)  // Limit to first 5 elements
+          .join(', ');
+        findingsText += `. Elements: ${elementsSummary}`;
+      }
+
+      // Add annotations if present
+      if (parsed.annotations && parsed.annotations.length > 0) {
+        const annotationsSummary = parsed.annotations.slice(0, 3).join('; ');
+        findingsText += `. Annotations: ${annotationsSummary}`;
+      }
+    } catch (e) {
+      findingsText = typeof finding.findings === 'string' ? finding.findings : '';
+    }
+
+    return `[Visual Finding ${index + 1}: ${finding.filename}, ${location}${finding.sheet_type ? ` (${finding.sheet_type})` : ''}]\n${findingsText}`;
+  }).join('\n\n---\n\n');
+
+  return `[Visual Analysis Findings]\n${formatted}`;
+}
+
+/**
  * Extract citations from GPT response
  * Formats:
  * - Sheet-based: [Drawing A-101, Sheet A-101] or [Drawing A-101, Sheet S-3.1]
@@ -250,12 +295,18 @@ async function sendMessage(chatId, userMessage) {
   // Add user message to database
   addMessage(chatId, 'user', userMessage);
 
-  // Search for relevant chunks
-  console.log('Searching for relevant document chunks...');
-  const relevantChunks = await searchRelevantChunks(chat.project_id, userMessage, 15);
+  // Search for relevant content (both chunks and visual findings)
+  console.log('Searching for relevant document content (text + vision)...');
+  const relevantContent = await searchRelevantContent(chat.project_id, userMessage, 15);
+
+  // Separate chunks from visual findings
+  const relevantChunks = relevantContent.filter(item => item.source_type === 'chunk');
+  const relevantVisualFindings = relevantContent.filter(item => item.source_type === 'visual_finding');
+
+  // Expand chunks with callouts
   const expandedChunks = expandChunksWithCallouts(relevantChunks, chat.project_id);
-  
-  if (expandedChunks.length === 0) {
+
+  if (expandedChunks.length === 0 && relevantVisualFindings.length === 0) {
     const noDocsMessage = "I don't have any processed documents for this project yet. Please upload and process documents first.";
     addMessage(chatId, 'assistant', noDocsMessage);
     return {
@@ -265,8 +316,16 @@ async function sendMessage(chatId, userMessage) {
     };
   }
 
-  // Format context from relevant chunks
-  const context = formatChunksForContext(expandedChunks) + formatVisualFindings(chat.project_id, expandedChunks);
+  // Format context from relevant chunks and visual findings
+  let context = '';
+
+  if (expandedChunks.length > 0) {
+    context += formatChunksForContext(expandedChunks);
+  }
+
+  if (relevantVisualFindings.length > 0) {
+    context += '\n\n' + formatVisualFindingsFromSearch(relevantVisualFindings);
+  }
 
   // Get chat history for full context
   const history = getChatHistory(chatId);
