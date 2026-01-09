@@ -97,6 +97,79 @@ function resolveSheetNumbers(citations, projectId) {
   });
 }
 
+function expandChunksWithCallouts(chunks, projectId, maxAdditional = 6) {
+  const detailSheets = new Set();
+  const chunkIds = new Set(chunks.map(chunk => chunk.id));
+
+  for (const chunk of chunks) {
+    if (!chunk.detail_reference) {
+      continue;
+    }
+
+    try {
+      const details = JSON.parse(chunk.detail_reference);
+      for (const detailRef of details) {
+        const match = detailRef.match(/\/([A-Z]{1,3}-\d+(?:\.\d+)?)/i);
+        if (match && match[1]) {
+          detailSheets.add(match[1].toUpperCase());
+        }
+      }
+    } catch (error) {
+      // Ignore parsing errors
+    }
+  }
+
+  if (detailSheets.size === 0) {
+    return chunks;
+  }
+
+  const additionalChunks = getQuery(
+    `
+    SELECT c.*, d.filename, d.type
+    FROM chunks c
+    JOIN documents d ON c.document_id = d.id
+    WHERE d.project_id = ?
+      AND c.sheet_number IN (${Array.from(detailSheets).map(() => '?').join(', ')})
+    ORDER BY c.page_number ASC
+    LIMIT ?
+    `,
+    [projectId, ...Array.from(detailSheets), maxAdditional]
+  ).filter(chunk => !chunkIds.has(chunk.id));
+
+  return [...chunks, ...additionalChunks];
+}
+
+function formatVisualFindings(projectId, chunks) {
+  const pageKeys = chunks.map(chunk => `${chunk.document_id}:${chunk.page_number}`);
+  if (pageKeys.length === 0) {
+    return '';
+  }
+
+  const findings = getQuery(
+    `
+    SELECT vf.*, d.filename
+    FROM visual_findings vf
+    JOIN documents d ON vf.document_id = d.id
+    WHERE d.project_id = ?
+      AND (vf.document_id || ':' || vf.page_number) IN (${pageKeys.map(() => '?').join(', ')})
+    `,
+    [projectId, ...pageKeys]
+  );
+
+  if (findings.length === 0) {
+    return '';
+  }
+
+  const formatted = findings.map(finding => {
+    const location = finding.sheet_number
+      ? `Sheet ${finding.sheet_number}`
+      : `Page ${finding.page_number}`;
+    return `- ${finding.filename}, ${location}: ${finding.findings}`;
+  }).join('\n');
+
+  return `\n\n[Visual Findings]\n${formatted}`;
+}
+
 /**
  * Extract citations from GPT response
  * Formats:
@@ -180,8 +253,9 @@ async function sendMessage(chatId, userMessage) {
   // Search for relevant chunks
   console.log('Searching for relevant document chunks...');
   const relevantChunks = await searchRelevantChunks(chat.project_id, userMessage, 15);
+  const expandedChunks = expandChunksWithCallouts(relevantChunks, chat.project_id);
   
-  if (relevantChunks.length === 0) {
+  if (expandedChunks.length === 0) {
     const noDocsMessage = "I don't have any processed documents for this project yet. Please upload and process documents first.";
     addMessage(chatId, 'assistant', noDocsMessage);
     return {
@@ -192,7 +266,7 @@ async function sendMessage(chatId, userMessage) {
   }
 
   // Format context from relevant chunks
-  const context = formatChunksForContext(relevantChunks);
+  const context = formatChunksForContext(expandedChunks) + formatVisualFindings(chat.project_id, expandedChunks);
 
   // Get chat history for full context
   const history = getChatHistory(chatId);

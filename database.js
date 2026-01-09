@@ -43,7 +43,46 @@ function runMigrations() {
         db.run('ALTER TABLE chunks ADD COLUMN detail_reference TEXT');
         saveDatabase();
       }
+
+      if (!columnNames.includes('ocr_text')) {
+        console.log('Running migration: Adding ocr_text column to chunks table');
+        db.run('ALTER TABLE chunks ADD COLUMN ocr_text TEXT');
+        saveDatabase();
+      }
+
+      if (!columnNames.includes('image_path')) {
+        console.log('Running migration: Adding image_path column to chunks table');
+        db.run('ALTER TABLE chunks ADD COLUMN image_path TEXT');
+        saveDatabase();
+      }
     }
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS callouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        page_number INTEGER NOT NULL,
+        sheet_number TEXT,
+        detail_reference TEXT NOT NULL,
+        detail_number TEXT,
+        target_sheet TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+      )
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS visual_findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        page_number INTEGER NOT NULL,
+        sheet_number TEXT,
+        findings TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+      )
+    `);
+    saveDatabase();
   } catch (error) {
     console.error('Migration error:', error);
   }
@@ -83,6 +122,8 @@ function createTables() {
       page_number INTEGER NOT NULL,
       sheet_number TEXT, -- Drawing sheet number (e.g., A-101, S-3.1)
       detail_reference TEXT, -- Detail reference (e.g., "3/A-101")
+      ocr_text TEXT, -- OCR extracted text from rasterized page
+      image_path TEXT, -- Stored rasterized page image path
       content TEXT NOT NULL,
       embedding TEXT, -- JSON string of embedding vector
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -112,6 +153,32 @@ function createTables() {
       citations TEXT, -- JSON string of citation objects
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS callouts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NOT NULL,
+      page_number INTEGER NOT NULL,
+      sheet_number TEXT,
+      detail_reference TEXT NOT NULL,
+      detail_number TEXT,
+      target_sheet TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS visual_findings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NOT NULL,
+      page_number INTEGER NOT NULL,
+      sheet_number TEXT,
+      findings TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
     )
   `);
 
