@@ -71,8 +71,11 @@ function toDataUrl(imagePath) {
 
 async function analyzeImage(imagePath, context) {
   const dataUrl = toDataUrl(imagePath);
+  // Use GPT-4o-mini for lower cost (set VISION_MODEL env var to override)
+  const model = process.env.VISION_MODEL || 'gpt-4o-mini'; // Changed default to mini
+
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: model,
     messages: [
       {
         role: 'user',
