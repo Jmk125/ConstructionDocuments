@@ -7,6 +7,16 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+function resolveImagePath(imagePath) {
+  if (!imagePath) {
+    return null;
+  }
+  if (path.isAbsolute(imagePath)) {
+    return imagePath;
+  }
+  return path.join(__dirname, '..', imagePath);
+}
+
 function buildVisionPrompt(context) {
   return [
     'You are analyzing construction drawing images.',
@@ -21,7 +31,7 @@ function buildVisionPrompt(context) {
 
 function toDataUrl(imagePath) {
   const ext = path.extname(imagePath).toLowerCase().replace('.', '');
-  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+  const mime = ext === 'png' ? 'image/png' : ext === 'svg' ? 'image/svg+xml' : 'image/jpeg';
   const buffer = fs.readFileSync(imagePath);
   return `data:${mime};base64,${buffer.toString('base64')}`;
 }
@@ -79,6 +89,7 @@ async function analyzeProjectVision(projectId, { limit = 25 } = {}) {
 
   const results = [];
   for (const chunk of chunks) {
+    const resolvedPath = resolveImagePath(chunk.image_path);
     const existing = getQuery(
       `SELECT id FROM visual_findings WHERE document_id = ? AND page_number = ? LIMIT 1`,
       [chunk.document_id, chunk.page_number]
@@ -88,7 +99,7 @@ async function analyzeProjectVision(projectId, { limit = 25 } = {}) {
       continue;
     }
 
-    if (!fs.existsSync(chunk.image_path)) {
+    if (!resolvedPath || !fs.existsSync(resolvedPath)) {
       results.push({ ...chunk, skipped: true, reason: 'image_not_found' });
       continue;
     }
@@ -97,7 +108,7 @@ async function analyzeProjectVision(projectId, { limit = 25 } = {}) {
       ? `Sheet ${chunk.sheet_number} (${chunk.filename})`
       : `Page ${chunk.page_number} (${chunk.filename})`;
 
-    const raw = await analyzeImage(chunk.image_path, context);
+    const raw = await analyzeImage(resolvedPath, context);
     const findings = parseVisionResponse(raw);
     saveVisualFinding(chunk.document_id, chunk.page_number, chunk.sheet_number, findings);
     results.push({ ...chunk, analyzed: true });
