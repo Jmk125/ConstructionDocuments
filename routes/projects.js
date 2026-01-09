@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { runQuery, getQuery, getOneQuery } = require('../database');
+const { analyzeConstructability } = require('../chatHandler');
 const fs = require('fs');
 const path = require('path');
 
@@ -80,6 +81,17 @@ router.post('/', (req, res) => {
     res.json(project);
   } catch (error) {
     console.error('Error creating project:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Run constructability review for a project
+router.post('/:id/constructability', async (req, res) => {
+  try {
+    const question = req.body.question || '';
+    const result = await analyzeConstructability(req.params.id, question);
+    res.json(result);
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

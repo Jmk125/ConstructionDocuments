@@ -1,6 +1,8 @@
 const pdfParse = require('pdf-parse');
 const fs = require('fs');
+const path = require('path');
 const { runQuery, getQuery } = require('./database');
+const { renderPdfPagesToImages, runOcrOnImages } = require('./services/pdfImages');
 
 /**
  * Extract sheet number from page text
@@ -73,6 +75,18 @@ function extractDetailReferences(pageText) {
   return Array.from(details);
 }
 
+function parseDetailReference(detailReference) {
+  const match = detailReference.match(/^(\d+)\s*\/\s*([A-Z]{1,3}-\d+(?:\.\d+)?)$/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    detailNumber: match[1],
+    targetSheet: match[2].toUpperCase()
+  };
+}
+
 /**
  * Process a single PDF document: extract text by page and store as chunks
  */
@@ -113,6 +127,24 @@ async function processDocument(documentId) {
 
     console.log(`Extracted text from ${pageCount} pages`);
 
+    const renderImages = process.env.VISION_IMAGE_RENDERING === 'true';
+    const runOcr = process.env.VISION_OCR_ENABLED === 'true' && Boolean(process.env.OPENAI_API_KEY);
+    const imageMap = new Map();
+    let ocrMap = new Map();
+
+    if (renderImages) {
+      const imagesDir = path.join(path.dirname(doc.filepath), 'images', `doc-${documentId}`);
+      const renderedPages = await renderPdfPagesToImages(doc.filepath, imagesDir);
+      for (const page of renderedPages) {
+        const relativePath = path.relative(__dirname, page.imagePath);
+        imageMap.set(page.pageNumber, relativePath);
+      }
+
+      if (runOcr) {
+        ocrMap = await runOcrOnImages(renderedPages);
+      }
+    }
+
     // Store each page as a chunk
     for (let pageNum = 0; pageNum < pageTexts.length; pageNum++) {
       const pageText = pageTexts[pageNum].trim();
@@ -140,10 +172,32 @@ async function processDocument(documentId) {
           : pageText;
 
         // Store chunk without embedding initially
+        const pageNumber = pageNum + 1;
+        const imagePath = imageMap.get(pageNumber) || null;
+        const ocrText = ocrMap.get(pageNumber) || null;
+
         runQuery(
-          'INSERT INTO chunks (document_id, page_number, sheet_number, detail_reference, content) VALUES (?, ?, ?, ?, ?)',
-          [documentId, pageNum + 1, sheetNumber, detailReference, truncatedText]
+          'INSERT INTO chunks (document_id, page_number, sheet_number, detail_reference, ocr_text, image_path, content) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [documentId, pageNumber, sheetNumber, detailReference, ocrText, imagePath, truncatedText]
         );
+
+        if (detailRefs.length > 0) {
+          for (const detailRef of detailRefs) {
+            const parsed = parseDetailReference(detailRef);
+            runQuery(
+              `INSERT INTO callouts (document_id, page_number, sheet_number, detail_reference, detail_number, target_sheet)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [
+                documentId,
+                pageNumber,
+                sheetNumber,
+                detailRef,
+                parsed ? parsed.detailNumber : null,
+                parsed ? parsed.targetSheet : null
+              ]
+            );
+          }
+        }
       }
     }
 
