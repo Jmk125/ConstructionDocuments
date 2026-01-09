@@ -97,6 +97,98 @@ function resolveSheetNumbers(citations, projectId) {
   });
 }
 
+function collectRelatedSheetsFromCallouts(projectId, chunks) {
+  const sheetNumbers = new Set(
+    chunks.map(chunk => chunk.sheet_number).filter(Boolean)
+  );
+  const documentIds = Array.from(new Set(chunks.map(chunk => chunk.document_id)));
+
+  if (sheetNumbers.size === 0 || documentIds.length === 0) {
+    return [];
+  }
+
+  const params = [...documentIds, ...sheetNumbers, ...sheetNumbers];
+  const calloutRows = getQuery(
+    `
+    SELECT sheet_number, target_sheet
+    FROM callouts
+    WHERE document_id IN (${documentIds.map(() => '?').join(', ')})
+      AND (
+        sheet_number IN (${Array.from(sheetNumbers).map(() => '?').join(', ')})
+        OR target_sheet IN (${Array.from(sheetNumbers).map(() => '?').join(', ')})
+      )
+    `,
+    params
+  );
+
+  const relatedSheets = new Set();
+  for (const row of calloutRows) {
+    if (row.sheet_number) {
+      relatedSheets.add(row.sheet_number);
+    }
+    if (row.target_sheet) {
+      relatedSheets.add(row.target_sheet);
+    }
+  }
+
+  return Array.from(relatedSheets);
+}
+
+function expandChunksWithCallouts(chunks, projectId, maxAdditional = 6) {
+  const chunkIds = new Set(chunks.map(chunk => chunk.id));
+  const relatedSheets = new Set(collectRelatedSheetsFromCallouts(projectId, chunks));
+
+  if (relatedSheets.size === 0) {
+    return chunks;
+  }
+
+  const additionalChunks = getQuery(
+    `
+    SELECT c.*, d.filename, d.type
+    FROM chunks c
+    JOIN documents d ON c.document_id = d.id
+    WHERE d.project_id = ?
+      AND c.sheet_number IN (${Array.from(relatedSheets).map(() => '?').join(', ')})
+    ORDER BY c.page_number ASC
+    LIMIT ?
+    `,
+    [projectId, ...Array.from(relatedSheets), maxAdditional]
+  ).filter(chunk => !chunkIds.has(chunk.id));
+
+  return [...chunks, ...additionalChunks];
+}
+
+function formatVisualFindings(projectId, chunks) {
+  const pageKeys = chunks.map(chunk => `${chunk.document_id}:${chunk.page_number}`);
+  if (pageKeys.length === 0) {
+    return '';
+  }
+
+  const findings = getQuery(
+    `
+    SELECT vf.*, d.filename
+    FROM visual_findings vf
+    JOIN documents d ON vf.document_id = d.id
+    WHERE d.project_id = ?
+      AND (vf.document_id || ':' || vf.page_number) IN (${pageKeys.map(() => '?').join(', ')})
+    `,
+    [projectId, ...pageKeys]
+  );
+
+  if (findings.length === 0) {
+    return '';
+  }
+
+  const formatted = findings.map(finding => {
+    const location = finding.sheet_number
+      ? `Sheet ${finding.sheet_number}`
+      : `Page ${finding.page_number}`;
+    return `- ${finding.filename}, ${location}: ${finding.findings}`;
+  }).join('\n');
+
+  return `\n\n[Visual Findings]\n${formatted}`;
+}
+
 /**
  * Extract citations from GPT response
  * Formats:
@@ -180,8 +272,9 @@ async function sendMessage(chatId, userMessage) {
   // Search for relevant chunks
   console.log('Searching for relevant document chunks...');
   const relevantChunks = await searchRelevantChunks(chat.project_id, userMessage, 15);
+  const expandedChunks = expandChunksWithCallouts(relevantChunks, chat.project_id);
   
-  if (relevantChunks.length === 0) {
+  if (expandedChunks.length === 0) {
     const noDocsMessage = "I don't have any processed documents for this project yet. Please upload and process documents first.";
     addMessage(chatId, 'assistant', noDocsMessage);
     return {
@@ -192,7 +285,7 @@ async function sendMessage(chatId, userMessage) {
   }
 
   // Format context from relevant chunks
-  const context = formatChunksForContext(relevantChunks);
+  const context = formatChunksForContext(expandedChunks) + formatVisualFindings(chat.project_id, expandedChunks);
 
   // Get chat history for full context
   const history = getChatHistory(chatId);

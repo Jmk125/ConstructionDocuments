@@ -5,6 +5,7 @@ const path = require('path');
 const { runQuery, getQuery, getOneQuery } = require('../database');
 const { processProject } = require('../documentProcessor');
 const { generateEmbeddings } = require('../embeddings');
+const { analyzeProjectVision } = require('../services/vision');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -176,6 +177,24 @@ router.post('/:projectId/process', async (req, res) => {
     console.error('\n========================================');
     console.error('ERROR processing documents:', error);
     console.error('========================================\n');
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Analyze drawings with vision models for a project
+router.post('/:projectId/vision', async (req, res) => {
+  if (process.env.VISION_ANALYSIS_ENABLED !== 'true') {
+    return res.status(400).json({
+      error: 'Vision analysis is disabled. Set VISION_ANALYSIS_ENABLED=true to enable.'
+    });
+  }
+
+  try {
+    const projectId = req.params.projectId;
+    const limit = Number.parseInt(req.body.limit, 10) || 25;
+    const results = await analyzeProjectVision(projectId, { limit });
+    res.json({ message: 'Vision analysis complete', results });
+  } catch (error) {
     res.status(500).json({ error: error.message, stack: error.stack });
   }
 });
