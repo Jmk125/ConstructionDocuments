@@ -41,12 +41,23 @@ function getRetryDelayMs(error, attempt) {
 }
 
 function getQuotaRetryConfig() {
-  const waitMs = Number.parseInt(process.env.OPENAI_QUOTA_WAIT_MS || '300000', 10);
-  const maxRetries = Number.parseInt(process.env.OPENAI_QUOTA_MAX_RETRIES || '12', 10);
+  const waitMs = Number.parseInt(process.env.OPENAI_QUOTA_WAIT_MS || '120000', 10);
+  const maxRetries = Number.parseInt(process.env.OPENAI_QUOTA_MAX_RETRIES || '3', 10);
 
   return {
     waitMs: Number.isFinite(waitMs) && waitMs > 0 ? waitMs : 0,
     maxRetries: Number.isFinite(maxRetries) && maxRetries > 0 ? maxRetries : 0
+  };
+}
+
+function extractOpenAIErrorDetails(error) {
+  return {
+    status: error && error.status,
+    code: error && error.error && error.error.code,
+    type: error && error.error && error.error.type,
+    message: (error && error.error && error.error.message) || error?.message,
+    requestId: error && error.headers && (error.headers['x-request-id'] || error.headers['X-Request-Id']),
+    retryAfter: error && error.headers && (error.headers['retry-after'] || error.headers['Retry-After'])
   };
 }
 
@@ -104,18 +115,22 @@ async function generateEmbeddings(projectId, onProgress = null) {
           break;
         } catch (requestError) {
           if (isQuotaError(requestError)) {
+            const errorDetails = extractOpenAIErrorDetails(requestError);
             if (quotaAttempts < quotaRetryConfig.maxRetries && quotaRetryConfig.waitMs > 0) {
               quotaAttempts += 1;
-              console.warn(`⚠️  OpenAI quota exceeded. Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
+              console.warn('⚠️  OpenAI quota exceeded.', errorDetails);
+              console.warn(`Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
               await new Promise(resolve => setTimeout(resolve, quotaRetryConfig.waitMs));
               continue;
             }
 
-            console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+            console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.', errorDetails);
             return {
               chunksProcessed: processed,
               pausedForQuota: true,
               remainingChunks: chunks.length - processed,
+              retryAfterMs: quotaRetryConfig.waitMs,
+              errorDetails,
               message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
             };
           }
@@ -166,11 +181,14 @@ async function generateEmbeddings(projectId, onProgress = null) {
       });
 
       if (isQuotaError(error)) {
-        console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+        const errorDetails = extractOpenAIErrorDetails(error);
+        console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.', errorDetails);
         return {
           chunksProcessed: processed,
           pausedForQuota: true,
           remainingChunks: chunks.length - processed,
+          retryAfterMs: quotaRetryConfig.waitMs,
+          errorDetails,
           message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
         };
       }
@@ -197,18 +215,22 @@ async function generateEmbeddings(projectId, onProgress = null) {
                 break;
               } catch (requestError) {
                 if (isQuotaError(requestError)) {
+                  const errorDetails = extractOpenAIErrorDetails(requestError);
                   if (quotaAttempts < quotaRetryConfig.maxRetries && quotaRetryConfig.waitMs > 0) {
                     quotaAttempts += 1;
-                    console.warn(`⚠️  OpenAI quota exceeded. Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
+                    console.warn('⚠️  OpenAI quota exceeded.', errorDetails);
+                    console.warn(`Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
                     await new Promise(resolve => setTimeout(resolve, quotaRetryConfig.waitMs));
                     continue;
                   }
 
-                  console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.');
+                  console.warn('⚠️  OpenAI quota exceeded. Pausing embedding generation.', errorDetails);
                   return {
                     chunksProcessed: processed,
                     pausedForQuota: true,
                     remainingChunks: chunks.length - processed,
+                    retryAfterMs: quotaRetryConfig.waitMs,
+                    errorDetails,
                     message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
                   };
                 }
@@ -440,18 +462,22 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
           break;
         } catch (requestError) {
           if (isQuotaError(requestError)) {
+            const errorDetails = extractOpenAIErrorDetails(requestError);
             if (quotaAttempts < quotaRetryConfig.maxRetries && quotaRetryConfig.waitMs > 0) {
               quotaAttempts += 1;
-              console.warn(`⚠️  OpenAI quota exceeded. Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
+              console.warn('⚠️  OpenAI quota exceeded.', errorDetails);
+              console.warn(`Waiting ${Math.round(quotaRetryConfig.waitMs / 1000)}s before retry ${quotaAttempts}/${quotaRetryConfig.maxRetries}...`);
               await new Promise(resolve => setTimeout(resolve, quotaRetryConfig.waitMs));
               continue;
             }
 
-            console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.');
+            console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.', errorDetails);
             return {
               findingsProcessed: processed,
               pausedForQuota: true,
               remainingFindings: findings.length - processed,
+              retryAfterMs: quotaRetryConfig.waitMs,
+              errorDetails,
               message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
             };
           }
@@ -493,11 +519,14 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
     } catch (error) {
       console.error('Error generating embeddings for visual findings batch:', error.message);
       if (isQuotaError(error)) {
-        console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.');
+        const errorDetails = extractOpenAIErrorDetails(error);
+        console.warn('⚠️  OpenAI quota exceeded. Pausing visual findings embedding generation.', errorDetails);
         return {
           findingsProcessed: processed,
           pausedForQuota: true,
           remainingFindings: findings.length - processed,
+          retryAfterMs: quotaRetryConfig.waitMs,
+          errorDetails,
           message: 'OpenAI quota exceeded. Resume after quota resets or upgrade your plan.'
         };
       }
