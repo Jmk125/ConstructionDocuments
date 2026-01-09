@@ -177,22 +177,29 @@ async function saveVisualFinding(documentId, pageNumber, sheetNumber, sheetType,
   }
 }
 
-async function analyzeProjectVision(projectId, { limit = 25 } = {}) {
-  const chunks = getQuery(
-    `
-    SELECT c.id, c.document_id, c.page_number, c.sheet_number, c.image_path, c.content, d.filename
+async function analyzeProjectVision(projectId, { limit = 25, skipTextHeavy = true, sheetTypes = null } = {}) {
+  let query = `
+    SELECT c.id, c.document_id, c.page_number, c.sheet_number, c.image_path, c.content, d.filename, d.type
     FROM chunks c
     JOIN documents d ON c.document_id = d.id
     WHERE d.project_id = ?
       AND c.image_path IS NOT NULL
       AND c.image_path != ''
-    ORDER BY c.document_id ASC, c.page_number ASC
-    LIMIT ?
-    `,
-    [projectId, limit]
-  );
+  `;
+
+  // Only process drawings, not specs (saves costs)
+  if (skipTextHeavy) {
+    query += ` AND d.type = 'drawing'`;
+  }
+
+  query += ` ORDER BY c.document_id ASC, c.page_number ASC LIMIT ?`;
+
+  const chunks = getQuery(query, [projectId, limit]);
 
   const results = [];
+  let processed = 0;
+  let skipped = 0;
+
   for (const chunk of chunks) {
     const existing = getQuery(
       `SELECT id FROM visual_findings WHERE document_id = ? AND page_number = ? LIMIT 1`,
@@ -218,10 +225,14 @@ async function analyzeProjectVision(projectId, { limit = 25 } = {}) {
     const raw = await analyzeImage(chunk.image_path, context);
     const findings = parseVisionResponse(raw);
     await saveVisualFinding(chunk.document_id, chunk.page_number, chunk.sheet_number, sheetType, findings);
+    processed++;
     results.push({ ...chunk, analyzed: true, sheetType });
+
+    console.log(`Progress: ${processed}/${chunks.length} images analyzed (${skipped} skipped)`);
   }
 
-  return results;
+  console.log(`\nVision analysis complete: ${processed} processed, ${skipped} skipped`);
+  return { results, processed, skipped, total: chunks.length };
 }
 
 module.exports = {

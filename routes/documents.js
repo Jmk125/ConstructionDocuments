@@ -182,6 +182,54 @@ router.post('/:projectId/process', async (req, res) => {
   }
 });
 
+// Estimate vision analysis cost before running
+router.get('/:projectId/vision-estimate', (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+    const limit = Number.parseInt(req.query.limit, 10) || 10;
+    const skipTextHeavy = req.query.skipTextHeavy !== 'false';
+
+    let query = `
+      SELECT COUNT(*) as total,
+             SUM(CASE WHEN vf.id IS NOT NULL THEN 1 ELSE 0 END) as already_processed
+      FROM chunks c
+      JOIN documents d ON c.document_id = d.id
+      LEFT JOIN visual_findings vf ON vf.document_id = c.document_id AND vf.page_number = c.page_number
+      WHERE d.project_id = ?
+        AND c.image_path IS NOT NULL
+        AND c.image_path != ''
+    `;
+
+    if (skipTextHeavy) {
+      query += ` AND d.type = 'drawing'`;
+    }
+
+    const result = getOneQuery(query, [projectId]);
+    const total = result.total || 0;
+    const alreadyProcessed = result.already_processed || 0;
+    const remaining = total - alreadyProcessed;
+    const toProcess = Math.min(remaining, limit);
+
+    const costPer = 0.008; // $0.008 per image (GPT-4o vision estimate)
+    const estimatedCost = toProcess * costPer;
+
+    res.json({
+      totalImages: total,
+      alreadyProcessed: alreadyProcessed,
+      remaining: remaining,
+      toProcess: toProcess,
+      estimatedCost: `$${estimatedCost.toFixed(3)}`,
+      costBreakdown: {
+        perImage: `$${costPer.toFixed(4)}`,
+        total: `$${estimatedCost.toFixed(3)}`
+      },
+      note: 'This is an estimate. Actual costs may vary based on image complexity.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Analyze drawings with vision models for a project
 router.post('/:projectId/vision', async (req, res) => {
   if (process.env.VISION_ANALYSIS_ENABLED !== 'true') {
@@ -192,9 +240,25 @@ router.post('/:projectId/vision', async (req, res) => {
 
   try {
     const projectId = req.params.projectId;
-    const limit = Number.parseInt(req.body.limit, 10) || 25;
-    const results = await analyzeProjectVision(projectId, { limit });
-    res.json({ message: 'Vision analysis complete', results });
+    const limit = Number.parseInt(req.body.limit, 10) || 10; // Reduced default to 10
+    const skipTextHeavy = req.body.skipTextHeavy !== false; // Default true (skip specs)
+
+    console.log(`\n========================================`);
+    console.log(`Starting vision analysis for project ${projectId}...`);
+    console.log(`Limit: ${limit} images`);
+    console.log(`Skip text-heavy pages: ${skipTextHeavy}`);
+    console.log(`Estimated cost: $${(limit * 0.008).toFixed(3)} (approx $0.008 per image)`);
+    console.log(`========================================\n`);
+
+    const results = await analyzeProjectVision(projectId, { limit, skipTextHeavy });
+
+    console.log(`\nActual cost estimate: $${(results.processed * 0.008).toFixed(3)}`);
+
+    res.json({
+      message: 'Vision analysis complete',
+      ...results,
+      estimatedCost: `$${(results.processed * 0.008).toFixed(3)}`
+    });
   } catch (error) {
     res.status(500).json({ error: error.message, stack: error.stack });
   }
