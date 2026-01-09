@@ -124,6 +124,19 @@ router.get('/:projectId/process-stream', async (req, res) => {
     });
     console.log(`\nEmbedding results:`, JSON.stringify(embeddingResults, null, 2));
 
+    if (embeddingResults.pausedForQuota) {
+      sendProgress({
+        stage: 'paused',
+        message: embeddingResults.message || 'Embedding generation paused due to quota limits.',
+        progress: 95,
+        results: { processResults, embeddingResults }
+      });
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     console.log(`\n========================================`);
     console.log(`Processing complete for project ${projectId}`);
     console.log(`========================================\n`);
@@ -168,6 +181,15 @@ router.post('/:projectId/process', async (req, res) => {
     console.log(`\n========================================`);
     console.log(`Processing complete for project ${projectId}`);
     console.log(`========================================\n`);
+
+    if (embeddingResults.pausedForQuota) {
+      res.json({
+        message: embeddingResults.message || 'Embedding generation paused due to quota limits.',
+        processResults,
+        embeddingResults
+      });
+      return;
+    }
 
     res.json({
       message: 'Documents processed successfully',
@@ -306,6 +328,14 @@ router.post('/:projectId/embed-visual-findings', async (req, res) => {
     console.log(`\n========================================`);
     console.log(`Visual findings embeddings complete`);
     console.log(`========================================\n`);
+
+    if (results.pausedForQuota) {
+      res.json({
+        message: results.message || 'Visual findings embedding generation paused due to quota limits.',
+        ...results
+      });
+      return;
+    }
 
     res.json({
       message: 'Visual findings embeddings generated',
