@@ -32,10 +32,10 @@ async function generateEmbeddings(projectId, onProgress = null) {
   console.log(`Generating embeddings for ${chunks.length} chunks...`);
 
   let processed = 0;
-  // Reduced batch size to avoid token AND rate limits
-  // OpenAI embedding API has 8192 token limit per request (all inputs combined)
-  // With truncated chunks (~1500 tokens max each), batches of 3 are safer for rate limits
-  const batchSize = 3; // Reduced from 5 to 3 for better rate limit compliance
+  // Conservative batch size for Tier 1 rate limits (200k TPM)
+  // Each chunk ~1500 tokens, batch of 2 = 3000 tokens
+  // With 2 second delay = 1800 tokens/sec = 108k TPM (well under 200k limit)
+  const batchSize = 2; // Reduced to 2 for strict rate limit compliance
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
@@ -73,9 +73,10 @@ async function generateEmbeddings(projectId, onProgress = null) {
         onProgress(processed, chunks.length);
       }
 
-      // Delay to avoid rate limiting (increased for Tier 1 TPM limits)
+      // Aggressive delay to stay under Tier 1 TPM limits (200k TPM)
+      // 2 second delay between batches = max 30 batches/min = 90k TPM (safe margin)
       if (i + batchSize < chunks.length) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Increased to 500ms
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds
       }
 
     } catch (error) {
@@ -86,6 +87,42 @@ async function generateEmbeddings(projectId, onProgress = null) {
         chunkIds: batch.map(c => c.id),
         textLengths: texts.map(t => t.length)
       });
+
+      // If rate limit error, wait and retry with exponential backoff
+      if (error.status === 429) {
+        console.log('⚠️  Rate limit hit. Waiting 60 seconds before retry...');
+        await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
+
+        // Retry this batch
+        console.log('Retrying batch after rate limit wait...');
+        try {
+          const response = await openai.embeddings.create({
+            model: 'text-embedding-3-small',
+            input: texts
+          });
+
+          for (let j = 0; j < batch.length; j++) {
+            const chunk = batch[j];
+            const embedding = response.data[j].embedding;
+            runQuery(
+              'UPDATE chunks SET embedding = ? WHERE id = ?',
+              [JSON.stringify(embedding), chunk.id]
+            );
+          }
+
+          processed += batch.length;
+          console.log(`✓ Retry successful: ${processed}/${chunks.length} chunks`);
+
+          if (onProgress) {
+            onProgress(processed, chunks.length);
+          }
+        } catch (retryError) {
+          console.error('Retry failed:', retryError.message);
+          throw retryError; // Give up after one retry
+        }
+
+        continue; // Skip the rest of error handling
+      }
 
       // If token limit error, try processing chunks one at a time
       if (error.status === 400 && error.message.includes('maximum context length')) {
@@ -329,9 +366,9 @@ async function generateVisualFindingsEmbeddings(projectId, onProgress = null) {
         onProgress(processed, findings.length);
       }
 
-      // Delay to avoid rate limiting (increased for Tier 1 TPM limits)
+      // Aggressive delay to stay under Tier 1 TPM limits
       if (i + batchSize < findings.length) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Increased to 500ms
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds
       }
 
     } catch (error) {
