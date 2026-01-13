@@ -100,29 +100,48 @@ function resolveSheetNumbers(citations, projectId) {
   });
 }
 
-function expandChunksWithCallouts(chunks, projectId, maxAdditional = 6) {
-  const detailSheets = new Set();
-  const chunkIds = new Set(chunks.map(chunk => chunk.id));
+function collectRelatedSheetsFromCallouts(projectId, chunks) {
+  const sheetNumbers = new Set(
+    chunks.map(chunk => chunk.sheet_number).filter(Boolean)
+  );
+  const documentIds = Array.from(new Set(chunks.map(chunk => chunk.document_id)));
 
-  for (const chunk of chunks) {
-    if (!chunk.detail_reference) {
-      continue;
+  if (sheetNumbers.size === 0 || documentIds.length === 0) {
+    return [];
+  }
+
+  const params = [...documentIds, ...sheetNumbers, ...sheetNumbers];
+  const calloutRows = getQuery(
+    `
+    SELECT sheet_number, target_sheet
+    FROM callouts
+    WHERE document_id IN (${documentIds.map(() => '?').join(', ')})
+      AND (
+        sheet_number IN (${Array.from(sheetNumbers).map(() => '?').join(', ')})
+        OR target_sheet IN (${Array.from(sheetNumbers).map(() => '?').join(', ')})
+      )
+    `,
+    params
+  );
+
+  const relatedSheets = new Set();
+  for (const row of calloutRows) {
+    if (row.sheet_number) {
+      relatedSheets.add(row.sheet_number);
     }
-
-    try {
-      const details = JSON.parse(chunk.detail_reference);
-      for (const detailRef of details) {
-        const match = detailRef.match(/\/([A-Z]{1,3}-\d+(?:\.\d+)?)/i);
-        if (match && match[1]) {
-          detailSheets.add(match[1].toUpperCase());
-        }
-      }
-    } catch (error) {
-      // Ignore parsing errors
+    if (row.target_sheet) {
+      relatedSheets.add(row.target_sheet);
     }
   }
 
-  if (detailSheets.size === 0) {
+  return Array.from(relatedSheets);
+}
+
+function expandChunksWithCallouts(chunks, projectId, maxAdditional = 6) {
+  const chunkIds = new Set(chunks.map(chunk => chunk.id));
+  const relatedSheets = new Set(collectRelatedSheetsFromCallouts(projectId, chunks));
+
+  if (relatedSheets.size === 0) {
     return chunks;
   }
 
@@ -132,11 +151,11 @@ function expandChunksWithCallouts(chunks, projectId, maxAdditional = 6) {
     FROM chunks c
     JOIN documents d ON c.document_id = d.id
     WHERE d.project_id = ?
-      AND c.sheet_number IN (${Array.from(detailSheets).map(() => '?').join(', ')})
+      AND c.sheet_number IN (${Array.from(relatedSheets).map(() => '?').join(', ')})
     ORDER BY c.page_number ASC
     LIMIT ?
     `,
-    [projectId, ...Array.from(detailSheets), maxAdditional]
+    [projectId, ...Array.from(relatedSheets), maxAdditional]
   ).filter(chunk => !chunkIds.has(chunk.id));
 
   return [...chunks, ...additionalChunks];
